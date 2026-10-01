@@ -7,11 +7,11 @@ import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
@@ -36,6 +36,7 @@ import androidx.compose.ui.unit.sp
 import com.example.myapplication.data.ControlMode
 import com.example.myapplication.data.GreenhouseState
 import com.example.myapplication.data.SensorReading
+import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -49,102 +50,253 @@ fun MainGreenhouseScreen(
 
     var selectedTab by remember { mutableIntStateOf(0) }
 
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = {
-                    Column {
-                        Text(
-                            "Invernadero Smart",
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 20.sp
-                        )
-                        Text(
-                            if (uiState.isSimulationMode) "Modo Simulación Activo"
-                            else if (uiState.isConnected) "Conectado: ${uiState.connectedDeviceName ?: "Arduino"}"
-                            else "Desconectado",
-                            fontSize = 12.sp,
-                            color = if (uiState.isConnected || uiState.isSimulationMode) Color(0xFF4CAF50) else Color(0xFFE53935)
-                        )
+    if (uiState.showTutorial) {
+        TutorialScreen(onFinish = { viewModel.dismissTutorial() })
+    } else {
+        Scaffold(
+            topBar = {
+                TopAppBar(
+                    title = {
+                        Column {
+                            Text(
+                                "Invernadero Smart",
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 20.sp
+                            )
+                            Text(
+                                if (uiState.isSimulationMode) "Modo Simulación Activo"
+                                else if (uiState.isConnected) "Conectado: ${uiState.connectedDeviceName ?: "Arduino"}"
+                                else "Desconectado",
+                                fontSize = 12.sp,
+                                color = if (uiState.isConnected || uiState.isSimulationMode) Color(0xFF4CAF50) else Color(0xFFE53935)
+                            )
+                        }
+                    },
+                    colors = TopAppBarDefaults.topAppBarColors(
+                        containerColor = MaterialTheme.colorScheme.primaryContainer,
+                        titleContentColor = MaterialTheme.colorScheme.onPrimaryContainer
+                    ),
+                    actions = {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.padding(end = 8.dp)
+                        ) {
+                            Text(
+                                text = if (uiState.isSimulationMode) "Sim" else "BT",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier.padding(end = 4.dp)
+                            )
+                            Switch(
+                                checked = uiState.isSimulationMode,
+                                onCheckedChange = { viewModel.setSimulationMode(it) }
+                            )
+                        }
                     }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.primaryContainer,
-                    titleContentColor = MaterialTheme.colorScheme.onPrimaryContainer
-                ),
-                actions = {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.padding(end = 8.dp)
-                    ) {
-                        Text(
-                            text = if (uiState.isSimulationMode) "Sim" else "BT",
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Bold,
-                            modifier = Modifier.padding(end = 4.dp)
-                        )
-                        Switch(
-                            checked = uiState.isSimulationMode,
-                            onCheckedChange = { viewModel.setSimulationMode(it) }
-                        )
-                    }
+                )
+            },
+            bottomBar = {
+                NavigationBar {
+                    NavigationBarItem(
+                        selected = selectedTab == 0,
+                        onClick = { selectedTab = 0 },
+                        icon = { Icon(Icons.Default.Dashboard, contentDescription = "Dashboard") },
+                        label = { Text("Monitoreo") }
+                    )
+                    NavigationBarItem(
+                        selected = selectedTab == 1,
+                        onClick = { selectedTab = 1 },
+                        icon = { Icon(Icons.Default.Tune, contentDescription = "Control") },
+                        label = { Text("Control") }
+                    )
+                    NavigationBarItem(
+                        selected = selectedTab == 2,
+                        onClick = { selectedTab = 2 },
+                        icon = { Icon(Icons.Default.ShowChart, contentDescription = "Historial") },
+                        label = { Text("Historial") }
+                    )
+                    NavigationBarItem(
+                        selected = selectedTab == 3,
+                        onClick = { selectedTab = 3 },
+                        icon = { Icon(Icons.Default.Bluetooth, contentDescription = "Conexión") },
+                        label = { Text("Conexión") }
+                    )
                 }
-            )
-        },
-        bottomBar = {
-            NavigationBar {
-                NavigationBarItem(
-                    selected = selectedTab == 0,
-                    onClick = { selectedTab = 0 },
-                    icon = { Icon(Icons.Default.Dashboard, contentDescription = "Dashboard") },
-                    label = { Text("Monitoreo") }
-                )
-                NavigationBarItem(
-                    selected = selectedTab == 1,
-                    onClick = { selectedTab = 1 },
-                    icon = { Icon(Icons.Default.Tune, contentDescription = "Control") },
-                    label = { Text("Control") }
-                )
-                NavigationBarItem(
-                    selected = selectedTab == 2,
-                    onClick = { selectedTab = 2 },
-                    icon = { Icon(Icons.Default.ShowChart, contentDescription = "Historial") },
-                    label = { Text("Historial") }
-                )
-                NavigationBarItem(
-                    selected = selectedTab == 3,
-                    onClick = { selectedTab = 3 },
-                    icon = { Icon(Icons.Default.Bluetooth, contentDescription = "Conexión") },
-                    label = { Text("Conexión") }
-                )
             }
-        }
-    ) { innerPadding ->
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(innerPadding)
-        ) {
-            when (selectedTab) {
-                0 -> DashboardTab(uiState = uiState)
-                1 -> ControlTab(
-                    uiState = uiState,
-                    onModeChange = { viewModel.setControlMode(it) },
-                    onHatchToggle = { viewModel.toggleHatchManual(it) },
-                    onThresholdChange = { viewModel.updateTemperatureThreshold(it) }
-                )
-                2 -> HistoryTab(history = history)
-                3 -> ConnectionTab(
-                    uiState = uiState,
-                    pairedDevices = viewModel.getPairedBluetoothDevices(),
-                    onConnectDevice = { viewModel.connectToBluetoothDevice(it) },
-                    onDisconnect = { viewModel.disconnectBluetooth() },
-                    onToggleSimulation = { viewModel.setSimulationMode(it) }
-                )
+        ) { innerPadding ->
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(innerPadding)
+            ) {
+                when (selectedTab) {
+                    0 -> DashboardTab(uiState = uiState)
+                    1 -> ControlTab(
+                        uiState = uiState,
+                        onModeChange = { viewModel.setControlMode(it) },
+                        onHatchToggle = { viewModel.toggleHatchManual(it) },
+                        onThresholdChange = { viewModel.updateTemperatureThreshold(it) }
+                    )
+                    2 -> HistoryTab(history = history)
+                    3 -> ConnectionTab(
+                        uiState = uiState,
+                        pairedDevices = viewModel.getPairedBluetoothDevices(),
+                        onConnectDevice = { viewModel.connectToBluetoothDevice(it) },
+                        onDisconnect = { viewModel.disconnectBluetooth() },
+                        onToggleSimulation = { viewModel.setSimulationMode(it) }
+                    )
+                }
             }
         }
     }
 }
+
+@Composable
+fun TutorialScreen(onFinish: () -> Unit) {
+    val pages = listOf(
+        TutorialPageData(
+            "¡Bienvenido a Invernadero Smart!",
+            "Gestiona y monitorea tu invernadero de forma inteligente desde la palma de tu mano.",
+            Icons.Default.Eco,
+            Color(0xFF4CAF50)
+        ),
+        TutorialPageData(
+            "Monitoreo en Tiempo Real",
+            "Observa la temperatura, humedad y luz. Recibirás alertas si el calor supera el límite establecido.",
+            Icons.Default.Dashboard,
+            Color(0xFF2196F3)
+        ),
+        TutorialPageData(
+            "Control Total",
+            "Cambia entre modo Automático (Arduino decide) o Manual (tú controlas la escotilla) y ajusta los umbrales.",
+            Icons.Default.Tune,
+            Color(0xFFFF9800)
+        ),
+        TutorialPageData(
+            "Conexión Bluetooth",
+            "Conéctate a tu módulo HC-05/ESP32 en la pestaña de Conexión o usa el modo Simulación para probar.",
+            Icons.Default.Bluetooth,
+            Color(0xFF673AB7)
+        )
+    )
+
+    val pagerState = rememberPagerState(pageCount = { pages.size })
+    val scope = rememberCoroutineScope()
+
+    Surface(
+        modifier = Modifier.fillMaxSize(),
+        color = MaterialTheme.colorScheme.background
+    ) {
+        Column(
+            modifier = Modifier.fillMaxSize(),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            HorizontalPager(
+                state = pagerState,
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth()
+            ) { pageIndex ->
+                val page = pages[pageIndex]
+                TutorialPageContent(page)
+            }
+
+            // Indicadores y Botones
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(24.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                // Indicadores de punto
+                Row {
+                    repeat(pages.size) { index ->
+                        Box(
+                            modifier = Modifier
+                                .padding(4.dp)
+                                .size(if (pagerState.currentPage == index) 12.dp else 8.dp)
+                                .clip(CircleShape)
+                                .background(
+                                    if (pagerState.currentPage == index) MaterialTheme.colorScheme.primary
+                                    else Color.LightGray
+                                )
+                        )
+                    }
+                }
+
+                // Botón Siguiente / Empezar
+                Button(
+                    onClick = {
+                        if (pagerState.currentPage < pages.size - 1) {
+                            scope.launch {
+                                pagerState.animateScrollToPage(pagerState.currentPage + 1)
+                            }
+                        } else {
+                            onFinish()
+                        }
+                    },
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Text(if (pagerState.currentPage < pages.size - 1) "Siguiente" else "¡Empezar!")
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun TutorialPageContent(page: TutorialPageData) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(32.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center
+    ) {
+        Box(
+            modifier = Modifier
+                .size(150.dp)
+                .clip(CircleShape)
+                .background(page.color.copy(alpha = 0.1f)),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                imageVector = page.icon,
+                contentDescription = null,
+                modifier = Modifier.size(80.dp),
+                tint = page.color
+            )
+        }
+        
+        Spacer(modifier = Modifier.height(40.dp))
+        
+        Text(
+            text = page.title,
+            fontSize = 24.sp,
+            fontWeight = FontWeight.Bold,
+            textAlign = TextAlign.Center,
+            color = MaterialTheme.colorScheme.onBackground
+        )
+        
+        Spacer(modifier = Modifier.height(16.dp))
+        
+        Text(
+            text = page.description,
+            fontSize = 16.sp,
+            textAlign = TextAlign.Center,
+            color = Color.Gray,
+            lineHeight = 22.sp
+        )
+    }
+}
+
+data class TutorialPageData(
+    val title: String,
+    val description: String,
+    val icon: ImageVector,
+    val color: Color
+)
 
 @Composable
 fun DashboardTab(uiState: GreenhouseState) {
@@ -836,7 +988,8 @@ fun ConnectionTab(
                 colors = CardDefaults.cardColors(containerColor = Color(0xFFECEFF1)),
                 modifier = Modifier.fillMaxWidth()
             ) {
-                Column(modifier = Modifier.padding(16.dp)) {
+                Column(modifier = Modifier.padding(16.dp)
+                ) {
                     Text(
                         "🔌 Protocolo de Comunicación Arduino",
                         fontWeight = FontWeight.Bold,
