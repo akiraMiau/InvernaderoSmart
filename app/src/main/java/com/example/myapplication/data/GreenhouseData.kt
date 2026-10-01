@@ -23,5 +23,6 @@ data class GreenhouseState(
     val isSimulationMode: Boolean = true, // Por defecto en modo simulación para pruebas iniciales
     val connectedDeviceName: String? = null,
     val lastEmergencyAlert: String? = null,
-    val showTutorial: Boolean = true // Mostramos tutorial por defecto al inicio
+    val isLoading: Boolean = true,    // Pantalla de carga (Splash)
+    val showTutorial: Boolean = true   // Tutorial después de carga
 )

@@ -9,6 +9,7 @@ import com.example.myapplication.data.ControlMode
 import com.example.myapplication.data.GreenhouseState
 import com.example.myapplication.data.NotificationHelper
 import com.example.myapplication.data.SensorReading
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -30,7 +31,7 @@ class GreenhouseViewModel(application: Application) : AndroidViewModel(applicati
     private var hasAlertedTemp = false
 
     init {
-        // Inicializar historial ficticio inicial de las últimas horas
+        // Inicializar historial ficticio inicial
         val initialHistory = mutableListOf<SensorReading>()
         val now = System.currentTimeMillis()
         val hourMs = 3600000L
@@ -45,6 +46,12 @@ class GreenhouseViewModel(application: Application) : AndroidViewModel(applicati
             )
         }
         _history.value = initialHistory
+
+        // Simular tiempo de carga (Splash Screen)
+        viewModelScope.launch {
+            delay(2500) // 2.5 segundos de carga
+            _uiState.update { it.copy(isLoading = false) }
+        }
 
         // Iniciar simulación por defecto
         if (_uiState.value.isSimulationMode) {
@@ -121,13 +128,12 @@ class GreenhouseViewModel(application: Application) : AndroidViewModel(applicati
         _history.update { list ->
             val updated = list.toMutableList()
             updated.add(newReading)
-            if (updated.size > 20) updated.removeAt(0) // Conservar últimas 20 lecturas
+            if (updated.size > 20) updated.removeAt(0)
             updated
         }
     }
 
     private fun parseIncomingBluetoothData(data: String) {
-        // Formato esperado de Arduino: "TEMP:28.5,HUM:60.0,LIGHT:75.0,HATCH:1"
         try {
             val parts = data.split(",")
             var temp = _uiState.value.temperature
