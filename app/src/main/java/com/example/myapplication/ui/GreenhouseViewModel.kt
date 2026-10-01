@@ -185,6 +185,10 @@ class GreenhouseViewModel(application: Application) : AndroidViewModel(applicati
         }
     }
 
+    fun dismissTutorial() {
+        _uiState.update { it.copy(showTutorial = false) }
+    }
+
     fun getPairedBluetoothDevices(): List<BluetoothDevice> {
         return bluetoothManager.getPairedDevices()
     }
