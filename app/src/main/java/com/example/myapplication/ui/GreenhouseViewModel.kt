@@ -4,11 +4,13 @@ import android.app.Application
 import android.bluetooth.BluetoothDevice
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.myapplication.data.AppPreferences
 import com.example.myapplication.data.BluetoothConnectionManager
 import com.example.myapplication.data.ControlMode
 import com.example.myapplication.data.GreenhouseState
 import com.example.myapplication.data.NotificationHelper
 import com.example.myapplication.data.SensorReading
+import com.example.myapplication.data.UserProfile
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -193,6 +195,87 @@ class GreenhouseViewModel(application: Application) : AndroidViewModel(applicati
 
     fun dismissTutorial() {
         _uiState.update { it.copy(showTutorial = false) }
+    }
+
+    fun replayTutorial() {
+        _uiState.update { it.copy(showTutorial = true) }
+    }
+
+    // --- Autenticación ---
+    fun login(email: String, pass: String): Boolean {
+        if (email.isBlank() || pass.isBlank()) return false
+        val userName = email.substringBefore("@").replaceFirstChar { if (it.isLowerCase()) it.titlecase(Locale.getDefault()) else it.toString() }
+        _uiState.update {
+            it.copy(
+                isLoggedIn = true,
+                currentUser = UserProfile(
+                    name = if (userName.isNotEmpty()) userName else "Usuario Invernadero",
+                    email = email,
+                    phone = "+52 55 1234 5678",
+                    authProvider = "Correo/Contraseña"
+                )
+            )
+        }
+        return true
+    }
+
+    fun register(name: String, email: String, pass: String): Boolean {
+        if (name.isBlank() || email.isBlank() || pass.isBlank()) return false
+        _uiState.update {
+            it.copy(
+                isLoggedIn = true,
+                currentUser = UserProfile(
+                    name = name,
+                    email = email,
+                    phone = "+52 55 1234 5678",
+                    authProvider = "Correo/Contraseña"
+                )
+            )
+        }
+        return true
+    }
+
+    fun loginWithSSO(provider: String) {
+        val name = if (provider.contains("Google", ignoreCase = true)) "Usuario Google" else "Usuario Apple"
+        val email = if (provider.contains("Google", ignoreCase = true)) "google.user@invernaderosmart.com" else "apple.user@invernaderosmart.com"
+        _uiState.update {
+            it.copy(
+                isLoggedIn = true,
+                currentUser = UserProfile(
+                    name = name,
+                    email = email,
+                    phone = "+52 55 9876 5432",
+                    authProvider = provider
+                )
+            )
+        }
+    }
+
+    fun logout() {
+        _uiState.update {
+            it.copy(
+                isLoggedIn = false
+            )
+        }
+    }
+
+    // --- Perfil y Ajustes ---
+    fun updateUserProfile(name: String, email: String, phone: String) {
+        _uiState.update {
+            it.copy(
+                currentUser = it.currentUser.copy(
+                    name = name,
+                    email = email,
+                    phone = phone
+                )
+            )
+        }
+    }
+
+    fun updatePreferences(newPreferences: AppPreferences) {
+        _uiState.update {
+            it.copy(appPreferences = newPreferences)
+        }
     }
 
     fun getPairedBluetoothDevices(): List<BluetoothDevice> {

@@ -7,7 +7,11 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.example.myapplication.data.AppTheme
 import com.example.myapplication.ui.GreenhouseViewModel
 import com.example.myapplication.ui.MainGreenhouseScreen
 import com.example.myapplication.ui.theme.MyApplicationTheme
@@ -28,8 +32,16 @@ class MainActivity : ComponentActivity() {
         requestRequiredPermissions()
 
         setContent {
-            MyApplicationTheme {
-                val viewModel: GreenhouseViewModel = viewModel()
+            val viewModel: GreenhouseViewModel = viewModel()
+            val uiState by viewModel.uiState.collectAsState()
+
+            val isDarkTheme = when (uiState.appPreferences.theme) {
+                AppTheme.DARK -> true
+                AppTheme.LIGHT -> false
+                AppTheme.SYSTEM -> isSystemInDarkTheme()
+            }
+
+            MyApplicationTheme(darkTheme = isDarkTheme) {
                 MainGreenhouseScreen(viewModel = viewModel)
             }
         }

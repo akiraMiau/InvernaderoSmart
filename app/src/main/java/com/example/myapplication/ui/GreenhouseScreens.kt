@@ -7,6 +7,7 @@ import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -31,15 +32,30 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.myapplication.data.AppPreferences
+import com.example.myapplication.data.AppTheme
 import com.example.myapplication.data.ControlMode
 import com.example.myapplication.data.GreenhouseState
 import com.example.myapplication.data.SensorReading
+import com.example.myapplication.data.TempUnit
+import com.example.myapplication.data.UserProfile
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.*
+
+fun formatTemp(celsius: Float, unit: TempUnit): String {
+    return if (unit == TempUnit.FAHRENHEIT) {
+        val f = celsius * 1.8f + 32f
+        "${String.format(Locale.US, "%.1f", f)} °F"
+    } else {
+        "${String.format(Locale.US, "%.1f", celsius)} °C"
+    }
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -51,13 +67,16 @@ fun MainGreenhouseScreen(
 
     var selectedTab by remember { mutableIntStateOf(0) }
 
-    // Control de flujo: Carga -> Tutorial -> Pantalla Principal
+    // Flujo principal: Splash (Carga) -> Tutorial -> Autenticación (Login/SSO) -> Panel Principal
     when {
         uiState.isLoading -> {
             SplashScreen()
         }
         uiState.showTutorial -> {
             TutorialScreen(onFinish = { viewModel.dismissTutorial() })
+        }
+        !uiState.isLoggedIn -> {
+            AuthScreen(viewModel = viewModel)
         }
         else -> {
             Scaffold(
@@ -128,6 +147,12 @@ fun MainGreenhouseScreen(
                             icon = { Icon(Icons.Default.Bluetooth, contentDescription = "Conexión") },
                             label = { Text("Conexión") }
                         )
+                        NavigationBarItem(
+                            selected = selectedTab == 4,
+                            onClick = { selectedTab = 4 },
+                            icon = { Icon(Icons.Default.Person, contentDescription = "Perfil") },
+                            label = { Text("Perfil") }
+                        )
                     }
                 }
             ) { innerPadding ->
@@ -144,13 +169,28 @@ fun MainGreenhouseScreen(
                             onHatchToggle = { viewModel.toggleHatchManual(it) },
                             onThresholdChange = { viewModel.updateTemperatureThreshold(it) }
                         )
-                        2 -> HistoryTab(history = history)
+                        2 -> HistoryTab(history = history, unit = uiState.appPreferences.tempUnit)
                         3 -> ConnectionTab(
                             uiState = uiState,
                             pairedDevices = viewModel.getPairedBluetoothDevices(),
                             onConnectDevice = { viewModel.connectToBluetoothDevice(it) },
                             onDisconnect = { viewModel.disconnectBluetooth() },
                             onToggleSimulation = { viewModel.setSimulationMode(it) }
+                        )
+                        4 -> ProfileTab(
+                            uiState = uiState,
+                            onUpdateProfile = { name, email, phone ->
+                                viewModel.updateUserProfile(name, email, phone)
+                            },
+                            onUpdatePreferences = { prefs ->
+                                viewModel.updatePreferences(prefs)
+                            },
+                            onReplayTutorial = {
+                                viewModel.replayTutorial()
+                            },
+                            onLogout = {
+                                viewModel.logout()
+                            }
                         )
                     }
                 }
@@ -159,17 +199,21 @@ fun MainGreenhouseScreen(
     }
 }
 
+// ==========================================
+// PANTALLA DE CARGA (SPLASH SCREEN)
+// ==========================================
+
 @Composable
 fun SplashScreen() {
-    val infiniteTransition = rememberInfiniteTransition(label = "splash")
+    val infiniteTransition = rememberInfiniteTransition(label = "splashTransition")
     val scale by infiniteTransition.animateFloat(
-        initialValue = 0.8f,
-        targetValue = 1.2f,
+        initialValue = 0.9f,
+        targetValue = 1.15f,
         animationSpec = infiniteRepeatable(
-            animation = tween(1000, easing = FastOutSlowInEasing),
+            animation = tween(1200, easing = FastOutSlowInEasing),
             repeatMode = RepeatMode.Reverse
         ),
-        label = "scale"
+        label = "logoScale"
     )
 
     Box(
@@ -178,37 +222,599 @@ fun SplashScreen() {
             .background(MaterialTheme.colorScheme.primaryContainer),
         contentAlignment = Alignment.Center
     ) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Icon(
-                imageVector = Icons.Default.Eco,
-                contentDescription = "Logo",
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center,
+            modifier = Modifier.padding(32.dp)
+        ) {
+            Box(
                 modifier = Modifier
-                    .size(120.dp)
-                    .scale(scale),
-                tint = Color(0xFF2E7D32)
-            )
-            Spacer(modifier = Modifier.height(24.dp))
+                    .size(140.dp)
+                    .clip(CircleShape)
+                    .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.85f)),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Eco,
+                    contentDescription = "Logo Invernadero",
+                    modifier = Modifier
+                        .size(80.dp)
+                        .scale(scale),
+                    tint = MaterialTheme.colorScheme.primary
+                )
+            }
+
+            Spacer(modifier = Modifier.height(32.dp))
+
             Text(
                 text = "Invernadero Smart",
-                fontSize = 28.sp,
-                fontWeight = FontWeight.Bold,
-                color = Color(0xFF1B5E20)
+                fontSize = 30.sp,
+                fontWeight = FontWeight.ExtraBold,
+                color = MaterialTheme.colorScheme.onPrimaryContainer,
+                textAlign = TextAlign.Center
             )
-            Spacer(modifier = Modifier.height(8.dp))
-            CircularProgressIndicator(
-                modifier = Modifier.size(40.dp),
-                color = Color(0xFF4CAF50),
-                strokeWidth = 3.dp
-            )
-            Spacer(modifier = Modifier.height(16.dp))
+
+            Spacer(modifier = Modifier.height(6.dp))
+
             Text(
-                text = "Cargando recursos...",
-                fontSize = 14.sp,
-                color = Color.Gray
+                text = "Control & Monitoreo Agrícola Automatizado",
+                fontSize = 13.sp,
+                fontWeight = FontWeight.Medium,
+                color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f),
+                textAlign = TextAlign.Center
+            )
+
+            Spacer(modifier = Modifier.height(48.dp))
+
+            CircularProgressIndicator(
+                modifier = Modifier.size(42.dp),
+                color = MaterialTheme.colorScheme.primary,
+                strokeWidth = 3.5.dp
+            )
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            Text(
+                text = "Inicializando sensores y verificando sesión...",
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Normal,
+                color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f)
             )
         }
     }
 }
+
+// ==========================================
+// PANTALLAS DE AUTENTICACIÓN (LOGIN / REGISTRO / RECUPERACIÓN / SSO)
+// ==========================================
+
+enum class AuthMode {
+    LOGIN,
+    REGISTER,
+    RECOVERY
+}
+
+@Composable
+fun AuthScreen(viewModel: GreenhouseViewModel) {
+    var authMode by remember { mutableStateOf(AuthMode.LOGIN) }
+
+    Surface(
+        modifier = Modifier.fillMaxSize(),
+        color = MaterialTheme.colorScheme.background
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(24.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            when (authMode) {
+                AuthMode.LOGIN -> LoginContent(
+                    onLogin = { email, pass ->
+                        viewModel.login(email, pass)
+                    },
+                    onSSO = { provider ->
+                        viewModel.loginWithSSO(provider)
+                    },
+                    onForgotPassword = { authMode = AuthMode.RECOVERY },
+                    onNavigateToRegister = { authMode = AuthMode.REGISTER }
+                )
+                AuthMode.REGISTER -> RegisterContent(
+                    onRegister = { name, email, pass ->
+                        viewModel.register(name, email, pass)
+                    },
+                    onSSO = { provider ->
+                        viewModel.loginWithSSO(provider)
+                    },
+                    onNavigateToLogin = { authMode = AuthMode.LOGIN }
+                )
+                AuthMode.RECOVERY -> RecoveryContent(
+                    onBackToLogin = { authMode = AuthMode.LOGIN }
+                )
+            }
+        }
+    }
+}
+
+@Composable
+fun LoginContent(
+    onLogin: (String, String) -> Unit,
+    onSSO: (String) -> Unit,
+    onForgotPassword: () -> Unit,
+    onNavigateToRegister: () -> Unit
+) {
+    var email by remember { mutableStateOf("") }
+    var password by remember { mutableStateOf("") }
+    var isPasswordVisible by remember { mutableStateOf(false) }
+    var errorMessage by remember { mutableStateOf<String?>(null) }
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 16.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Box(
+            modifier = Modifier
+                .size(72.dp)
+                .clip(CircleShape)
+                .background(MaterialTheme.colorScheme.primaryContainer),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                imageVector = Icons.Default.Eco,
+                contentDescription = null,
+                modifier = Modifier.size(40.dp),
+                tint = MaterialTheme.colorScheme.primary
+            )
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        Text(
+            "Iniciar Sesión",
+            fontSize = 26.sp,
+            fontWeight = FontWeight.Bold,
+            color = MaterialTheme.colorScheme.onBackground
+        )
+
+        Text(
+            "Accede a tu panel de Invernadero Smart",
+            fontSize = 14.sp,
+            color = Color.Gray
+        )
+
+        Spacer(modifier = Modifier.height(24.dp))
+
+        OutlinedTextField(
+            value = email,
+            onValueChange = {
+                email = it
+                errorMessage = null
+            },
+            label = { Text("Correo Electrónico") },
+            leadingIcon = { Icon(Icons.Default.Email, contentDescription = null) },
+            singleLine = true,
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
+            modifier = Modifier.fillMaxWidth()
+        )
+
+        Spacer(modifier = Modifier.height(12.dp))
+
+        OutlinedTextField(
+            value = password,
+            onValueChange = {
+                password = it
+                errorMessage = null
+            },
+            label = { Text("Contraseña") },
+            leadingIcon = { Icon(Icons.Default.Lock, contentDescription = null) },
+            trailingIcon = {
+                IconButton(onClick = { isPasswordVisible = !isPasswordVisible }) {
+                    Icon(
+                        imageVector = if (isPasswordVisible) Icons.Default.VisibilityOff else Icons.Default.Visibility,
+                        contentDescription = "Ver contraseña"
+                    )
+                }
+            },
+            singleLine = true,
+            visualTransformation = if (isPasswordVisible) VisualTransformation.None else PasswordVisualTransformation(),
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+            modifier = Modifier.fillMaxWidth()
+        )
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.End
+        ) {
+            TextButton(onClick = onForgotPassword) {
+                Text("¿Olvidaste tu contraseña?", fontSize = 13.sp)
+            }
+        }
+
+        errorMessage?.let {
+            Text(it, color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
+            Spacer(modifier = Modifier.height(8.dp))
+        }
+
+        Button(
+            onClick = {
+                if (email.isBlank() || password.isBlank()) {
+                    errorMessage = "Por favor completa todos los campos"
+                } else {
+                    onLogin(email, password)
+                }
+            },
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(50.dp),
+            shape = RoundedCornerShape(12.dp)
+        ) {
+            Text("Iniciar Sesión", fontSize = 16.sp, fontWeight = FontWeight.Bold)
+        }
+
+        Spacer(modifier = Modifier.height(20.dp))
+
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            HorizontalDivider(modifier = Modifier.weight(1f))
+            Text(
+                "  O continúa con  ",
+                fontSize = 12.sp,
+                color = Color.Gray
+            )
+            HorizontalDivider(modifier = Modifier.weight(1f))
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        // Botones Single Sign-On (SSO)
+        SSOButton(
+            text = "Continuar con Google",
+            icon = Icons.Default.AccountCircle,
+            containerColor = Color(0xFFF2F2F2),
+            contentColor = Color(0xFF333333),
+            onClick = { onSSO("Google SSO") }
+        )
+
+        Spacer(modifier = Modifier.height(10.dp))
+
+        SSOButton(
+            text = "Continuar con Apple",
+            icon = Icons.Default.PhoneIphone,
+            containerColor = Color(0xFF000000),
+            contentColor = Color.White,
+            onClick = { onSSO("Apple SSO") }
+        )
+
+        Spacer(modifier = Modifier.height(24.dp))
+
+        Row(
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text("¿No tienes una cuenta?", fontSize = 14.sp, color = Color.Gray)
+            TextButton(onClick = onNavigateToRegister) {
+                Text("Regístrate", fontWeight = FontWeight.Bold)
+            }
+        }
+    }
+}
+
+@Composable
+fun RegisterContent(
+    onRegister: (String, String, String) -> Unit,
+    onSSO: (String) -> Unit,
+    onNavigateToLogin: () -> Unit
+) {
+    var name by remember { mutableStateOf("") }
+    var email by remember { mutableStateOf("") }
+    var password by remember { mutableStateOf("") }
+    var confirmPassword by remember { mutableStateOf("") }
+    var isPasswordVisible by remember { mutableStateOf(false) }
+    var errorMessage by remember { mutableStateOf<String?>(null) }
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 16.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Box(
+            modifier = Modifier
+                .size(64.dp)
+                .clip(CircleShape)
+                .background(MaterialTheme.colorScheme.secondaryContainer),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                imageVector = Icons.Default.PersonAdd,
+                contentDescription = null,
+                modifier = Modifier.size(36.dp),
+                tint = MaterialTheme.colorScheme.secondary
+            )
+        }
+
+        Spacer(modifier = Modifier.height(12.dp))
+
+        Text(
+            "Crear Cuenta",
+            fontSize = 24.sp,
+            fontWeight = FontWeight.Bold,
+            color = MaterialTheme.colorScheme.onBackground
+        )
+
+        Text(
+            "Regístrate para monitorear tu invernadero",
+            fontSize = 13.sp,
+            color = Color.Gray
+        )
+
+        Spacer(modifier = Modifier.height(20.dp))
+
+        OutlinedTextField(
+            value = name,
+            onValueChange = { name = it; errorMessage = null },
+            label = { Text("Nombre Completo") },
+            leadingIcon = { Icon(Icons.Default.Person, contentDescription = null) },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth()
+        )
+
+        Spacer(modifier = Modifier.height(10.dp))
+
+        OutlinedTextField(
+            value = email,
+            onValueChange = { email = it; errorMessage = null },
+            label = { Text("Correo Electrónico") },
+            leadingIcon = { Icon(Icons.Default.Email, contentDescription = null) },
+            singleLine = true,
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
+            modifier = Modifier.fillMaxWidth()
+        )
+
+        Spacer(modifier = Modifier.height(10.dp))
+
+        OutlinedTextField(
+            value = password,
+            onValueChange = { password = it; errorMessage = null },
+            label = { Text("Contraseña") },
+            leadingIcon = { Icon(Icons.Default.Lock, contentDescription = null) },
+            trailingIcon = {
+                IconButton(onClick = { isPasswordVisible = !isPasswordVisible }) {
+                    Icon(
+                        imageVector = if (isPasswordVisible) Icons.Default.VisibilityOff else Icons.Default.Visibility,
+                        contentDescription = "Ver contraseña"
+                    )
+                }
+            },
+            singleLine = true,
+            visualTransformation = if (isPasswordVisible) VisualTransformation.None else PasswordVisualTransformation(),
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+            modifier = Modifier.fillMaxWidth()
+        )
+
+        Spacer(modifier = Modifier.height(10.dp))
+
+        OutlinedTextField(
+            value = confirmPassword,
+            onValueChange = { confirmPassword = it; errorMessage = null },
+            label = { Text("Confirmar Contraseña") },
+            leadingIcon = { Icon(Icons.Default.LockReset, contentDescription = null) },
+            singleLine = true,
+            visualTransformation = PasswordVisualTransformation(),
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+            modifier = Modifier.fillMaxWidth()
+        )
+
+        Spacer(modifier = Modifier.height(12.dp))
+
+        errorMessage?.let {
+            Text(it, color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
+            Spacer(modifier = Modifier.height(8.dp))
+        }
+
+        Button(
+            onClick = {
+                if (name.isBlank() || email.isBlank() || password.isBlank()) {
+                    errorMessage = "Por favor completa todos los campos"
+                } else if (password != confirmPassword) {
+                    errorMessage = "Las contraseñas no coinciden"
+                } else {
+                    onRegister(name, email, password)
+                }
+            },
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(50.dp),
+            shape = RoundedCornerShape(12.dp)
+        ) {
+            Text("Registrarse", fontSize = 16.sp, fontWeight = FontWeight.Bold)
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        SSOButton(
+            text = "Registrarse con Google",
+            icon = Icons.Default.AccountCircle,
+            containerColor = Color(0xFFF2F2F2),
+            contentColor = Color(0xFF333333),
+            onClick = { onSSO("Google SSO") }
+        )
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        Row(
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text("¿Ya tienes una cuenta?", fontSize = 14.sp, color = Color.Gray)
+            TextButton(onClick = onNavigateToLogin) {
+                Text("Inicia sesión", fontWeight = FontWeight.Bold)
+            }
+        }
+    }
+}
+
+@Composable
+fun RecoveryContent(
+    onBackToLogin: () -> Unit
+) {
+    var email by remember { mutableStateOf("") }
+    var isSubmitted by remember { mutableStateOf(false) }
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 16.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Box(
+            modifier = Modifier
+                .size(64.dp)
+                .clip(CircleShape)
+                .background(Color(0xFFFFF3E0)),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                imageVector = Icons.Default.LockReset,
+                contentDescription = null,
+                modifier = Modifier.size(36.dp),
+                tint = Color(0xFFE65100)
+            )
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        Text(
+            "Recuperar Contraseña",
+            fontSize = 24.sp,
+            fontWeight = FontWeight.Bold,
+            color = MaterialTheme.colorScheme.onBackground
+        )
+
+        Spacer(modifier = Modifier.height(8.dp))
+
+        Text(
+            "Flujo sin fricción: Ingresa tu correo registrado y te enviaremos las instrucciones de restablecimiento de inmediato.",
+            fontSize = 13.sp,
+            color = Color.Gray,
+            textAlign = TextAlign.Center
+        )
+
+        Spacer(modifier = Modifier.height(24.dp))
+
+        if (isSubmitted) {
+            Card(
+                colors = CardDefaults.cardColors(containerColor = Color(0xFFE8F5E9)),
+                border = CardDefaults.outlinedCardBorder().copy(brush = SolidColor(Color(0xFF4CAF50))),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.CheckCircle,
+                        contentDescription = null,
+                        tint = Color(0xFF2E7D32),
+                        modifier = Modifier.size(40.dp)
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        "¡Correo de Recuperación Enviado!",
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFF2E7D32)
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        "Hemos enviado las instrucciones a: $email.\nRevisa tu bandeja de entrada o spam para restablecer tu contraseña.",
+                        fontSize = 12.sp,
+                        color = Color.DarkGray,
+                        textAlign = TextAlign.Center
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(20.dp))
+
+            Button(
+                onClick = onBackToLogin,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(48.dp)
+            ) {
+                Text("Volver a Iniciar Sesión")
+            }
+        } else {
+            OutlinedTextField(
+                value = email,
+                onValueChange = { email = it },
+                label = { Text("Correo Electrónico Registrado") },
+                leadingIcon = { Icon(Icons.Default.Email, contentDescription = null) },
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
+                modifier = Modifier.fillMaxWidth()
+            )
+
+            Spacer(modifier = Modifier.height(20.dp))
+
+            Button(
+                onClick = {
+                    if (email.isNotBlank()) {
+                        isSubmitted = true
+                    }
+                },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(50.dp),
+                shape = RoundedCornerShape(12.dp)
+            ) {
+                Text("Enviar Enlace de Recuperación", fontSize = 15.sp, fontWeight = FontWeight.Bold)
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            OutlinedButton(
+                onClick = onBackToLogin,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Icon(Icons.Default.ArrowBack, contentDescription = null)
+                Spacer(modifier = Modifier.width(6.dp))
+                Text("Volver")
+            }
+        }
+    }
+}
+
+@Composable
+fun SSOButton(
+    text: String,
+    icon: ImageVector,
+    containerColor: Color,
+    contentColor: Color,
+    onClick: () -> Unit
+) {
+    Button(
+        onClick = onClick,
+        colors = ButtonDefaults.buttonColors(
+            containerColor = containerColor,
+            contentColor = contentColor
+        ),
+        shape = RoundedCornerShape(12.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(48.dp)
+    ) {
+        Icon(imageVector = icon, contentDescription = null)
+        Spacer(modifier = Modifier.width(10.dp))
+        Text(text, fontSize = 14.sp, fontWeight = FontWeight.Medium)
+    }
+}
+
+// ==========================================
+// PANTALLA DE TUTORIAL
+// ==========================================
 
 @Composable
 fun TutorialScreen(onFinish: () -> Unit) {
@@ -260,6 +866,7 @@ fun TutorialScreen(onFinish: () -> Unit) {
                 TutorialPageContent(page)
             }
 
+            // Indicadores y Botones
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -267,6 +874,7 @@ fun TutorialScreen(onFinish: () -> Unit) {
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
+                // Indicadores de punto
                 Row {
                     repeat(pages.size) { index ->
                         Box(
@@ -282,6 +890,7 @@ fun TutorialScreen(onFinish: () -> Unit) {
                     }
                 }
 
+                // Botón Siguiente / Empezar
                 Button(
                     onClick = {
                         if (pagerState.currentPage < pages.size - 1) {
@@ -294,7 +903,7 @@ fun TutorialScreen(onFinish: () -> Unit) {
                     },
                     shape = RoundedCornerShape(12.dp)
                 ) {
-                    Text(if (pagerState.currentPage < pages.size - 1) "Siguiente" else "¡Empezar!")
+                    Text(if (pagerState.currentPage < pages.size - 1) "Siguiente" else "¡Ir a Iniciar Sesión!")
                 }
             }
         }
@@ -324,9 +933,9 @@ fun TutorialPageContent(page: TutorialPageData) {
                 tint = page.color
             )
         }
-        
+
         Spacer(modifier = Modifier.height(40.dp))
-        
+
         Text(
             text = page.title,
             fontSize = 24.sp,
@@ -334,9 +943,9 @@ fun TutorialPageContent(page: TutorialPageData) {
             textAlign = TextAlign.Center,
             color = MaterialTheme.colorScheme.onBackground
         )
-        
+
         Spacer(modifier = Modifier.height(16.dp))
-        
+
         Text(
             text = page.description,
             fontSize = 16.sp,
@@ -354,9 +963,14 @@ data class TutorialPageData(
     val color: Color
 )
 
+// ==========================================
+// PESTAÑA DASHBOARD (MONITOREO)
+// ==========================================
+
 @Composable
 fun DashboardTab(uiState: GreenhouseState) {
     val isTempHigh = uiState.temperature >= uiState.tempThreshold
+    val tempUnit = uiState.appPreferences.tempUnit
 
     LazyColumn(
         modifier = Modifier
@@ -364,6 +978,7 @@ fun DashboardTab(uiState: GreenhouseState) {
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
+        // Alerta Crítica en Tiempo Real
         item {
             AnimatedVisibility(visible = isTempHigh) {
                 Card(
@@ -392,7 +1007,7 @@ fun DashboardTab(uiState: GreenhouseState) {
                                 fontSize = 14.sp
                             )
                             Text(
-                                "La temperatura (${String.format(Locale.US, "%.1f", uiState.temperature)}°C) supera el umbral límite (${uiState.tempThreshold}°C). Escotilla abierta por emergencia.",
+                                "La temperatura (${formatTemp(uiState.temperature, tempUnit)}) supera el umbral límite (${formatTemp(uiState.tempThreshold, tempUnit)}). Escotilla abierta por emergencia.",
                                 fontSize = 12.sp,
                                 color = Color(0xFFB71C1C)
                             )
@@ -402,10 +1017,12 @@ fun DashboardTab(uiState: GreenhouseState) {
             }
         }
 
+        // Tarjeta de Estado de la Escotilla
         item {
             HatchStatusCard(hatchOpen = uiState.hatchOpen, controlMode = uiState.controlMode)
         }
 
+        // Rejilla de Lecturas de Sensores
         item {
             Text(
                 "Sensores en Tiempo Real",
@@ -417,9 +1034,9 @@ fun DashboardTab(uiState: GreenhouseState) {
 
         item {
             SensorCard(
-                title = "Temperatura",
-                value = "${String.format(Locale.US, "%.1f", uiState.temperature)} °C",
-                subtitle = "Umbral: ${uiState.tempThreshold} °C",
+                title = "Temperatura Ambiente",
+                value = formatTemp(uiState.temperature, tempUnit),
+                subtitle = "Umbral: ${formatTemp(uiState.tempThreshold, tempUnit)}",
                 icon = Icons.Default.Thermostat,
                 cardColor = if (isTempHigh) Color(0xFFFFE0B2) else Color(0xFFE8F5E9),
                 iconColor = if (isTempHigh) Color(0xFFE65100) else Color(0xFF2E7D32)
@@ -558,6 +1175,10 @@ fun SensorCard(
     }
 }
 
+// ==========================================
+// PESTAÑA CONTROL
+// ==========================================
+
 @Composable
 fun ControlTab(
     uiState: GreenhouseState,
@@ -565,6 +1186,7 @@ fun ControlTab(
     onHatchToggle: (Boolean) -> Unit,
     onThresholdChange: (Float) -> Unit
 ) {
+    val tempUnit = uiState.appPreferences.tempUnit
     var thresholdInput by remember(uiState.tempThreshold) {
         mutableStateOf(String.format(Locale.US, "%.1f", uiState.tempThreshold))
     }
@@ -583,6 +1205,7 @@ fun ControlTab(
             )
         }
 
+        // Selección de Modo Automático / Manual
         item {
             Card(
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
@@ -627,6 +1250,7 @@ fun ControlTab(
             }
         }
 
+        // Control Manual de Escotilla
         item {
             Card(
                 colors = CardDefaults.cardColors(
@@ -673,6 +1297,7 @@ fun ControlTab(
             }
         }
 
+        // Configuración Dinámica de Umbrales (Ajustes)
         item {
             Card(
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
@@ -680,7 +1305,7 @@ fun ControlTab(
             ) {
                 Column(modifier = Modifier.padding(16.dp)) {
                     Text(
-                        "Configuración Dinámica de Umbral (°C)",
+                        "Configuración Dinámica de Umbral",
                         fontWeight = FontWeight.Bold,
                         fontSize = 16.sp
                     )
@@ -693,7 +1318,7 @@ fun ControlTab(
                     Spacer(modifier = Modifier.height(16.dp))
 
                     Text(
-                        "Umbral Actual: ${String.format(Locale.US, "%.1f", uiState.tempThreshold)} °C",
+                        "Umbral Actual: ${formatTemp(uiState.tempThreshold, tempUnit)}",
                         fontWeight = FontWeight.Bold,
                         fontSize = 18.sp,
                         color = MaterialTheme.colorScheme.primary
@@ -738,8 +1363,12 @@ fun ControlTab(
     }
 }
 
+// ==========================================
+// PESTAÑA HISTORIAL
+// ==========================================
+
 @Composable
-fun HistoryTab(history: List<SensorReading>) {
+fun HistoryTab(history: List<SensorReading>, unit: TempUnit) {
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -751,13 +1380,14 @@ fun HistoryTab(history: List<SensorReading>) {
             fontSize = 20.sp
         )
         Text(
-            "Gráfico lineal de Temperatura (°C) y Humedad (%)",
+            "Gráfico lineal de Temperatura (${if (unit == TempUnit.FAHRENHEIT) "°F" else "°C"}) y Humedad (%)",
             fontSize = 12.sp,
             color = Color.Gray
         )
 
         Spacer(modifier = Modifier.height(16.dp))
 
+        // Leyenda
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceEvenly
@@ -769,7 +1399,7 @@ fun HistoryTab(history: List<SensorReading>) {
                         .background(Color(0xFFE53935), CircleShape)
                 )
                 Spacer(modifier = Modifier.width(6.dp))
-                Text("Temperatura (°C)", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                Text("Temperatura", fontSize = 12.sp, fontWeight = FontWeight.Bold)
             }
 
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -785,6 +1415,7 @@ fun HistoryTab(history: List<SensorReading>) {
 
         Spacer(modifier = Modifier.height(12.dp))
 
+        // Canvas Gráfico
         Card(
             colors = CardDefaults.cardColors(containerColor = Color.White),
             border = CardDefaults.outlinedCardBorder(),
@@ -830,7 +1461,7 @@ fun HistoryTab(history: List<SensorReading>) {
                             color = Color.Gray
                         )
                         Text(
-                            "Temp: ${String.format(Locale.US, "%.1f", item.temperature)}°C",
+                            "Temp: ${formatTemp(item.temperature, unit)}",
                             fontSize = 13.sp,
                             color = Color(0xFFD32F2F),
                             fontWeight = FontWeight.Bold
@@ -864,6 +1495,7 @@ fun LineChartCanvas(history: List<SensorReading>) {
         val maxVal = 100f
         val minVal = 0f
 
+        // Líneas de Rejilla de Fondo
         for (i in 0..4) {
             val y = height * (i / 4f)
             drawLine(
@@ -883,6 +1515,8 @@ fun LineChartCanvas(history: List<SensorReading>) {
 
         history.forEachIndexed { index, reading ->
             val x = index * stepX
+
+            // Normalización Y para Temp (0 - 100)
             val tempY = height - ((reading.temperature - minVal) / (maxVal - minVal) * height)
             val humY = height - ((reading.humidity - minVal) / (maxVal - minVal) * height)
 
@@ -893,10 +1527,13 @@ fun LineChartCanvas(history: List<SensorReading>) {
                 tempPath.lineTo(x, tempY)
                 humPath.lineTo(x, humY)
             }
+
+            // Dibujar Puntos
             drawCircle(color = Color(0xFFE53935), radius = 3.dp.toPx(), center = Offset(x, tempY))
             drawCircle(color = Color(0xFF1E88E5), radius = 3.dp.toPx(), center = Offset(x, humY))
         }
 
+        // Dibujar Trazos
         drawPath(
             path = tempPath,
             color = Color(0xFFE53935),
@@ -909,6 +1546,10 @@ fun LineChartCanvas(history: List<SensorReading>) {
         )
     }
 }
+
+// ==========================================
+// PESTAÑA CONEXIÓN
+// ==========================================
 
 @SuppressLint("MissingPermission")
 @Composable
@@ -933,6 +1574,7 @@ fun ConnectionTab(
             )
         }
 
+        // Estado de Simulación / Conexión Real
         item {
             Card(
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
@@ -961,6 +1603,7 @@ fun ConnectionTab(
             }
         }
 
+        // Lista de Dispositivos Emparejados
         item {
             Text(
                 "Dispositivos Bluetooth Emparejados (HC-05 / ESP32)",
@@ -1022,12 +1665,15 @@ fun ConnectionTab(
             }
         }
 
+        // Guía de Comandos Serie
         item {
             Card(
                 colors = CardDefaults.cardColors(containerColor = Color(0xFFECEFF1)),
                 modifier = Modifier.fillMaxWidth()
             ) {
-                Column(modifier = Modifier.padding(16.dp)) {
+                Column(
+                    modifier = Modifier.padding(16.dp)
+                ) {
                     Text(
                         "🔌 Protocolo de Comunicación Arduino",
                         fontWeight = FontWeight.Bold,
@@ -1043,5 +1689,426 @@ fun ConnectionTab(
                 }
             }
         }
+    }
+}
+
+// ==========================================
+// PESTAÑA PERFIL Y AJUSTES
+// ==========================================
+
+@Composable
+fun ProfileTab(
+    uiState: GreenhouseState,
+    onUpdateProfile: (String, String, String) -> Unit,
+    onUpdatePreferences: (AppPreferences) -> Unit,
+    onReplayTutorial: () -> Unit,
+    onLogout: () -> Unit
+) {
+    val user = uiState.currentUser
+    val prefs = uiState.appPreferences
+
+    var nameInput by remember(user.name) { mutableStateOf(user.name) }
+    var emailInput by remember(user.email) { mutableStateOf(user.email) }
+    var phoneInput by remember(user.phone) { mutableStateOf(user.phone) }
+
+    var showSavedSnackbar by remember { mutableStateOf(false) }
+    var showTermsDialog by remember { mutableStateOf(false) }
+
+    LazyColumn(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp)
+    ) {
+        // Encabezado de Usuario
+        item {
+            Card(
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Row(
+                    modifier = Modifier
+                        .padding(20.dp)
+                        .fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(64.dp)
+                            .clip(CircleShape)
+                            .background(MaterialTheme.colorScheme.primary),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = if (user.name.isNotEmpty()) user.name.first().uppercase() else "U",
+                            fontSize = 28.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color.White
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.width(16.dp))
+
+                    Column {
+                        Text(
+                            text = user.name,
+                            fontSize = 20.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer
+                        )
+                        Text(
+                            text = user.email,
+                            fontSize = 13.sp,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f)
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        AssistChip(
+                            onClick = {},
+                            label = { Text(user.authProvider, fontSize = 11.sp) },
+                            leadingIcon = {
+                                Icon(
+                                    imageVector = Icons.Default.VerifiedUser,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(14.dp)
+                                )
+                            }
+                        )
+                    }
+                }
+            }
+        }
+
+        // Sección: Información Personal
+        item {
+            Card(
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            Icons.Default.Person,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            "Información Personal",
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 16.sp
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    OutlinedTextField(
+                        value = nameInput,
+                        onValueChange = { nameInput = it },
+                        label = { Text("Nombre Completo") },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true
+                    )
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    OutlinedTextField(
+                        value = emailInput,
+                        onValueChange = { emailInput = it },
+                        label = { Text("Correo Electrónico") },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email)
+                    )
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    OutlinedTextField(
+                        value = phoneInput,
+                        onValueChange = { phoneInput = it },
+                        label = { Text("Teléfono de Contacto") },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone)
+                    )
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    Button(
+                        onClick = {
+                            onUpdateProfile(nameInput, emailInput, phoneInput)
+                            showSavedSnackbar = true
+                        },
+                        modifier = Modifier.align(Alignment.End)
+                    ) {
+                        Icon(Icons.Default.Save, contentDescription = null)
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("Guardar Cambios")
+                    }
+
+                    if (showSavedSnackbar) {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            "✓ Información de perfil actualizada correctamente.",
+                            color = Color(0xFF2E7D32),
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+            }
+        }
+
+        // Sección: Preferencias de la App
+        item {
+            Card(
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            Icons.Default.Palette,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            "Preferencias de la App",
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 16.sp
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    Text("Tema de la Aplicación", fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        FilterChip(
+                            selected = prefs.theme == AppTheme.SYSTEM,
+                            onClick = { onUpdatePreferences(prefs.copy(theme = AppTheme.SYSTEM)) },
+                            label = { Text("Sistema") },
+                            modifier = Modifier.weight(1f)
+                        )
+                        FilterChip(
+                            selected = prefs.theme == AppTheme.LIGHT,
+                            onClick = { onUpdatePreferences(prefs.copy(theme = AppTheme.LIGHT)) },
+                            label = { Text("Claro") },
+                            modifier = Modifier.weight(1f)
+                        )
+                        FilterChip(
+                            selected = prefs.theme == AppTheme.DARK,
+                            onClick = { onUpdatePreferences(prefs.copy(theme = AppTheme.DARK)) },
+                            label = { Text("Oscuro") },
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    Text("Unidad de Temperatura", fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        FilterChip(
+                            selected = prefs.tempUnit == TempUnit.CELSIUS,
+                            onClick = { onUpdatePreferences(prefs.copy(tempUnit = TempUnit.CELSIUS)) },
+                            label = { Text("°C (Celsius)") },
+                            modifier = Modifier.weight(1f)
+                        )
+                        FilterChip(
+                            selected = prefs.tempUnit == TempUnit.FAHRENHEIT,
+                            onClick = { onUpdatePreferences(prefs.copy(tempUnit = TempUnit.FAHRENHEIT)) },
+                            label = { Text("°F (Fahrenheit)") },
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                }
+            }
+        }
+
+        // Sección: Notificaciones
+        item {
+            Card(
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            Icons.Default.Notifications,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            "Ajustes de Notificaciones",
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 16.sp
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("Alertas de Temperatura Crítica", fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                            Text("Avisar cuando supere el umbral límite", fontSize = 11.sp, color = Color.Gray)
+                        }
+                        Switch(
+                            checked = prefs.notifyTemperatureAlerts,
+                            onCheckedChange = {
+                                onUpdatePreferences(prefs.copy(notifyTemperatureAlerts = it))
+                            }
+                        )
+                    }
+
+                    HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("Apertura/Cierre de Escotilla", fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                            Text("Avisar cambio de estado de servomotor", fontSize = 11.sp, color = Color.Gray)
+                        }
+                        Switch(
+                            checked = prefs.notifyHatchAlerts,
+                            onCheckedChange = {
+                                onUpdatePreferences(prefs.copy(notifyHatchAlerts = it))
+                            }
+                        )
+                    }
+
+                    HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("Avisos del Sistema", fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                            Text("Notificaciones generales de conexión", fontSize = 11.sp, color = Color.Gray)
+                        }
+                        Switch(
+                            checked = prefs.notifySystemAlerts,
+                            onCheckedChange = {
+                                onUpdatePreferences(prefs.copy(notifySystemAlerts = it))
+                            }
+                        )
+                    }
+                }
+            }
+        }
+
+        // Sección: Términos de Servicio y Tutorial
+        item {
+            Card(
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { showTermsDialog = true }
+                            .padding(vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(Icons.Default.Description, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                        Spacer(modifier = Modifier.width(12.dp))
+                        Text(
+                            "Términos de Servicio y Políticas de Privacidad",
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Medium,
+                            modifier = Modifier.weight(1f)
+                        )
+                        Icon(Icons.Default.ChevronRight, contentDescription = null, tint = Color.Gray)
+                    }
+
+                    HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { onReplayTutorial() }
+                            .padding(vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(Icons.Default.Help, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                        Spacer(modifier = Modifier.width(12.dp))
+                        Text(
+                            "Ver Tutorial de la App de Nuevo",
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Medium,
+                            modifier = Modifier.weight(1f)
+                        )
+                        Icon(Icons.Default.ChevronRight, contentDescription = null, tint = Color.Gray)
+                    }
+                }
+            }
+        }
+
+        // Sección: Cerrar Sesión
+        item {
+            Button(
+                onClick = onLogout,
+                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFD32F2F)),
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(50.dp)
+            ) {
+                Icon(Icons.Default.Logout, contentDescription = null)
+                Spacer(modifier = Modifier.width(8.dp))
+                Text("Cerrar Sesión", fontSize = 16.sp, fontWeight = FontWeight.Bold)
+            }
+        }
+    }
+
+    // Diálogo de Términos de Servicio
+    if (showTermsDialog) {
+        AlertDialog(
+            onDismissRequest = { showTermsDialog = false },
+            title = {
+                Text("Términos de Servicio y Privacidad", fontWeight = FontWeight.Bold)
+            },
+            text = {
+                LazyColumn(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(300.dp)
+                ) {
+                    item {
+                        Text(
+                            "Bienvenido a Invernadero Smart.\n\n" +
+                                    "1. Aceptación de Términos: Al utilizar esta aplicación, aceptas gestionar de manera responsable el control automatizado y manual de las escotillas y actuadores conectadas a tu microcontrolador Arduino/ESP32.\n\n" +
+                                    "2. Privacidad de Datos: Los datos de tus sensores (temperatura, humedad y luz) se procesan localmente en tu dispositivo y no se comparten con terceros.\n\n" +
+                                    "3. Seguridad e Invernadero: Es responsabilidad del usuario verificar que los umbrales de temperatura y actuadores físicos tengan los mecanismos de seguridad adecuados para evitar sobrecalentamiento en tus cultivos.\n\n" +
+                                    "4. Actualizaciones: Esta app se reserva el derecho de mejorar los protocolos Bluetooth y las capacidades de monitoreo en tiempo real.",
+                            fontSize = 12.sp,
+                            color = Color.DarkGray
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showTermsDialog = false }) {
+                    Text("Entendido y Aceptar")
+                }
+            }
+        )
     }
 }
