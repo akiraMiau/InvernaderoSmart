@@ -4,7 +4,7 @@ import android.annotation.SuppressLint
 import android.bluetooth.BluetoothDevice
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.*
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
@@ -22,6 +22,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
@@ -50,103 +51,161 @@ fun MainGreenhouseScreen(
 
     var selectedTab by remember { mutableIntStateOf(0) }
 
-    if (uiState.showTutorial) {
-        TutorialScreen(onFinish = { viewModel.dismissTutorial() })
-    } else {
-        Scaffold(
-            topBar = {
-                TopAppBar(
-                    title = {
-                        Column {
-                            Text(
-                                "Invernadero Smart",
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 20.sp
-                            )
-                            Text(
-                                if (uiState.isSimulationMode) "Modo Simulación Activo"
-                                else if (uiState.isConnected) "Conectado: ${uiState.connectedDeviceName ?: "Arduino"}"
-                                else "Desconectado",
-                                fontSize = 12.sp,
-                                color = if (uiState.isConnected || uiState.isSimulationMode) Color(0xFF4CAF50) else Color(0xFFE53935)
-                            )
+    // Control de flujo: Carga -> Tutorial -> Pantalla Principal
+    when {
+        uiState.isLoading -> {
+            SplashScreen()
+        }
+        uiState.showTutorial -> {
+            TutorialScreen(onFinish = { viewModel.dismissTutorial() })
+        }
+        else -> {
+            Scaffold(
+                topBar = {
+                    TopAppBar(
+                        title = {
+                            Column {
+                                Text(
+                                    "Invernadero Smart",
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 20.sp
+                                )
+                                Text(
+                                    if (uiState.isSimulationMode) "Modo Simulación Activo"
+                                    else if (uiState.isConnected) "Conectado: ${uiState.connectedDeviceName ?: "Arduino"}"
+                                    else "Desconectado",
+                                    fontSize = 12.sp,
+                                    color = if (uiState.isConnected || uiState.isSimulationMode) Color(0xFF4CAF50) else Color(0xFFE53935)
+                                )
+                            }
+                        },
+                        colors = TopAppBarDefaults.topAppBarColors(
+                            containerColor = MaterialTheme.colorScheme.primaryContainer,
+                            titleContentColor = MaterialTheme.colorScheme.onPrimaryContainer
+                        ),
+                        actions = {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.padding(end = 8.dp)
+                            ) {
+                                Text(
+                                    text = if (uiState.isSimulationMode) "Sim" else "BT",
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    modifier = Modifier.padding(end = 4.dp)
+                                )
+                                Switch(
+                                    checked = uiState.isSimulationMode,
+                                    onCheckedChange = { viewModel.setSimulationMode(it) }
+                                )
+                            }
                         }
-                    },
-                    colors = TopAppBarDefaults.topAppBarColors(
-                        containerColor = MaterialTheme.colorScheme.primaryContainer,
-                        titleContentColor = MaterialTheme.colorScheme.onPrimaryContainer
-                    ),
-                    actions = {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.padding(end = 8.dp)
-                        ) {
-                            Text(
-                                text = if (uiState.isSimulationMode) "Sim" else "BT",
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.Bold,
-                                modifier = Modifier.padding(end = 4.dp)
-                            )
-                            Switch(
-                                checked = uiState.isSimulationMode,
-                                onCheckedChange = { viewModel.setSimulationMode(it) }
-                            )
-                        }
+                    )
+                },
+                bottomBar = {
+                    NavigationBar {
+                        NavigationBarItem(
+                            selected = selectedTab == 0,
+                            onClick = { selectedTab = 0 },
+                            icon = { Icon(Icons.Default.Dashboard, contentDescription = "Dashboard") },
+                            label = { Text("Monitoreo") }
+                        )
+                        NavigationBarItem(
+                            selected = selectedTab == 1,
+                            onClick = { selectedTab = 1 },
+                            icon = { Icon(Icons.Default.Tune, contentDescription = "Control") },
+                            label = { Text("Control") }
+                        )
+                        NavigationBarItem(
+                            selected = selectedTab == 2,
+                            onClick = { selectedTab = 2 },
+                            icon = { Icon(Icons.Default.ShowChart, contentDescription = "Historial") },
+                            label = { Text("Historial") }
+                        )
+                        NavigationBarItem(
+                            selected = selectedTab == 3,
+                            onClick = { selectedTab = 3 },
+                            icon = { Icon(Icons.Default.Bluetooth, contentDescription = "Conexión") },
+                            label = { Text("Conexión") }
+                        )
                     }
-                )
-            },
-            bottomBar = {
-                NavigationBar {
-                    NavigationBarItem(
-                        selected = selectedTab == 0,
-                        onClick = { selectedTab = 0 },
-                        icon = { Icon(Icons.Default.Dashboard, contentDescription = "Dashboard") },
-                        label = { Text("Monitoreo") }
-                    )
-                    NavigationBarItem(
-                        selected = selectedTab == 1,
-                        onClick = { selectedTab = 1 },
-                        icon = { Icon(Icons.Default.Tune, contentDescription = "Control") },
-                        label = { Text("Control") }
-                    )
-                    NavigationBarItem(
-                        selected = selectedTab == 2,
-                        onClick = { selectedTab = 2 },
-                        icon = { Icon(Icons.Default.ShowChart, contentDescription = "Historial") },
-                        label = { Text("Historial") }
-                    )
-                    NavigationBarItem(
-                        selected = selectedTab == 3,
-                        onClick = { selectedTab = 3 },
-                        icon = { Icon(Icons.Default.Bluetooth, contentDescription = "Conexión") },
-                        label = { Text("Conexión") }
-                    )
+                }
+            ) { innerPadding ->
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(innerPadding)
+                ) {
+                    when (selectedTab) {
+                        0 -> DashboardTab(uiState = uiState)
+                        1 -> ControlTab(
+                            uiState = uiState,
+                            onModeChange = { viewModel.setControlMode(it) },
+                            onHatchToggle = { viewModel.toggleHatchManual(it) },
+                            onThresholdChange = { viewModel.updateTemperatureThreshold(it) }
+                        )
+                        2 -> HistoryTab(history = history)
+                        3 -> ConnectionTab(
+                            uiState = uiState,
+                            pairedDevices = viewModel.getPairedBluetoothDevices(),
+                            onConnectDevice = { viewModel.connectToBluetoothDevice(it) },
+                            onDisconnect = { viewModel.disconnectBluetooth() },
+                            onToggleSimulation = { viewModel.setSimulationMode(it) }
+                        )
+                    }
                 }
             }
-        ) { innerPadding ->
-            Box(
+        }
+    }
+}
+
+@Composable
+fun SplashScreen() {
+    val infiniteTransition = rememberInfiniteTransition(label = "splash")
+    val scale by infiniteTransition.animateFloat(
+        initialValue = 0.8f,
+        targetValue = 1.2f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(1000, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "scale"
+    )
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.primaryContainer),
+        contentAlignment = Alignment.Center
+    ) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Icon(
+                imageVector = Icons.Default.Eco,
+                contentDescription = "Logo",
                 modifier = Modifier
-                    .fillMaxSize()
-                    .padding(innerPadding)
-            ) {
-                when (selectedTab) {
-                    0 -> DashboardTab(uiState = uiState)
-                    1 -> ControlTab(
-                        uiState = uiState,
-                        onModeChange = { viewModel.setControlMode(it) },
-                        onHatchToggle = { viewModel.toggleHatchManual(it) },
-                        onThresholdChange = { viewModel.updateTemperatureThreshold(it) }
-                    )
-                    2 -> HistoryTab(history = history)
-                    3 -> ConnectionTab(
-                        uiState = uiState,
-                        pairedDevices = viewModel.getPairedBluetoothDevices(),
-                        onConnectDevice = { viewModel.connectToBluetoothDevice(it) },
-                        onDisconnect = { viewModel.disconnectBluetooth() },
-                        onToggleSimulation = { viewModel.setSimulationMode(it) }
-                    )
-                }
-            }
+                    .size(120.dp)
+                    .scale(scale),
+                tint = Color(0xFF2E7D32)
+            )
+            Spacer(modifier = Modifier.height(24.dp))
+            Text(
+                text = "Invernadero Smart",
+                fontSize = 28.sp,
+                fontWeight = FontWeight.Bold,
+                color = Color(0xFF1B5E20)
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            CircularProgressIndicator(
+                modifier = Modifier.size(40.dp),
+                color = Color(0xFF4CAF50),
+                strokeWidth = 3.dp
+            )
+            Spacer(modifier = Modifier.height(16.dp))
+            Text(
+                text = "Cargando recursos...",
+                fontSize = 14.sp,
+                color = Color.Gray
+            )
         }
     }
 }
@@ -201,7 +260,6 @@ fun TutorialScreen(onFinish: () -> Unit) {
                 TutorialPageContent(page)
             }
 
-            // Indicadores y Botones
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -209,7 +267,6 @@ fun TutorialScreen(onFinish: () -> Unit) {
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                // Indicadores de punto
                 Row {
                     repeat(pages.size) { index ->
                         Box(
@@ -225,7 +282,6 @@ fun TutorialScreen(onFinish: () -> Unit) {
                     }
                 }
 
-                // Botón Siguiente / Empezar
                 Button(
                     onClick = {
                         if (pagerState.currentPage < pages.size - 1) {
@@ -308,7 +364,6 @@ fun DashboardTab(uiState: GreenhouseState) {
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
-        // Alerta Crítica en Tiempo Real
         item {
             AnimatedVisibility(visible = isTempHigh) {
                 Card(
@@ -347,12 +402,10 @@ fun DashboardTab(uiState: GreenhouseState) {
             }
         }
 
-        // Tarjeta de Estado de la Escotilla
         item {
             HatchStatusCard(hatchOpen = uiState.hatchOpen, controlMode = uiState.controlMode)
         }
 
-        // Rejilla de Lecturas de Sensores
         item {
             Text(
                 "Sensores en Tiempo Real",
@@ -530,7 +583,6 @@ fun ControlTab(
             )
         }
 
-        // Selección de Modo Automático / Manual
         item {
             Card(
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
@@ -575,7 +627,6 @@ fun ControlTab(
             }
         }
 
-        // Control Manual de Escotilla
         item {
             Card(
                 colors = CardDefaults.cardColors(
@@ -622,7 +673,6 @@ fun ControlTab(
             }
         }
 
-        // Configuración Dinámica de Umbrales (Ajustes)
         item {
             Card(
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
@@ -708,7 +758,6 @@ fun HistoryTab(history: List<SensorReading>) {
 
         Spacer(modifier = Modifier.height(16.dp))
 
-        // Leyenda
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceEvenly
@@ -736,7 +785,6 @@ fun HistoryTab(history: List<SensorReading>) {
 
         Spacer(modifier = Modifier.height(12.dp))
 
-        // Canvas Gráfico
         Card(
             colors = CardDefaults.cardColors(containerColor = Color.White),
             border = CardDefaults.outlinedCardBorder(),
@@ -816,7 +864,6 @@ fun LineChartCanvas(history: List<SensorReading>) {
         val maxVal = 100f
         val minVal = 0f
 
-        // Líneas de Rejilla de Fondo
         for (i in 0..4) {
             val y = height * (i / 4f)
             drawLine(
@@ -836,8 +883,6 @@ fun LineChartCanvas(history: List<SensorReading>) {
 
         history.forEachIndexed { index, reading ->
             val x = index * stepX
-
-            // Normalización Y para Temp (0 - 100)
             val tempY = height - ((reading.temperature - minVal) / (maxVal - minVal) * height)
             val humY = height - ((reading.humidity - minVal) / (maxVal - minVal) * height)
 
@@ -848,13 +893,10 @@ fun LineChartCanvas(history: List<SensorReading>) {
                 tempPath.lineTo(x, tempY)
                 humPath.lineTo(x, humY)
             }
-
-            // Dibujar Puntos
             drawCircle(color = Color(0xFFE53935), radius = 3.dp.toPx(), center = Offset(x, tempY))
             drawCircle(color = Color(0xFF1E88E5), radius = 3.dp.toPx(), center = Offset(x, humY))
         }
 
-        // Dibujar Trazos
         drawPath(
             path = tempPath,
             color = Color(0xFFE53935),
@@ -891,7 +933,6 @@ fun ConnectionTab(
             )
         }
 
-        // Estado de Simulación / Conexión Real
         item {
             Card(
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
@@ -920,7 +961,6 @@ fun ConnectionTab(
             }
         }
 
-        // Lista de Dispositivos Emparejados
         item {
             Text(
                 "Dispositivos Bluetooth Emparejados (HC-05 / ESP32)",
@@ -982,14 +1022,12 @@ fun ConnectionTab(
             }
         }
 
-        // Guía de Comandos Serie
         item {
             Card(
                 colors = CardDefaults.cardColors(containerColor = Color(0xFFECEFF1)),
                 modifier = Modifier.fillMaxWidth()
             ) {
-                Column(modifier = Modifier.padding(16.dp)
-                ) {
+                Column(modifier = Modifier.padding(16.dp)) {
                     Text(
                         "🔌 Protocolo de Comunicación Arduino",
                         fontWeight = FontWeight.Bold,
