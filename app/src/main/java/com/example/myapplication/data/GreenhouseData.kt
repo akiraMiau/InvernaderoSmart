@@ -5,6 +5,13 @@ enum class ControlMode {
     MANUAL
 }
 
+enum class UiStatus {
+    LOADING,
+    SUCCESS,
+    EMPTY,
+    ERROR
+}
+
 enum class AppTheme {
     SYSTEM,
     LIGHT,
@@ -51,9 +58,13 @@ data class GreenhouseState(
     val connectedDeviceName: String? = null,
     val lastEmergencyAlert: String? = null,
     val isLoading: Boolean = true,    // Pantalla de carga (Splash)
-    val showTutorial: Boolean = true,  // Tutorial después de carga
+    val showTutorial: Boolean = true,  // Onboarding
     val isLoggedIn: Boolean = false,   // Autenticación después del tutorial
     val currentUser: UserProfile = UserProfile(),
-    val appPreferences: AppPreferences = AppPreferences()
+    val appPreferences: AppPreferences = AppPreferences(),
+    val uiStatus: UiStatus = UiStatus.SUCCESS,
+    val errorMessage: String? = null,
+    val userSnackbarMessage: String? = null,
+    val isBiometricEnabled: Boolean = true
 )
 

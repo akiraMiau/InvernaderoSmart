@@ -249,6 +249,22 @@ class GreenhouseViewModel(application: Application) : AndroidViewModel(applicati
                 )
             )
         }
+        showSnackbar("Sesión iniciada con $provider")
+    }
+
+    fun loginWithBiometrics() {
+        _uiState.update {
+            it.copy(
+                isLoggedIn = true,
+                currentUser = UserProfile(
+                    name = "Usuario Biométrico",
+                    email = "biometria@invernaderosmart.com",
+                    phone = "+52 55 5555 5555",
+                    authProvider = "Biometría / Huella Digital"
+                )
+            )
+        }
+        showSnackbar("Sesión iniciada con Biometría / Huella Digital")
     }
 
     fun logout() {
@@ -257,6 +273,30 @@ class GreenhouseViewModel(application: Application) : AndroidViewModel(applicati
                 isLoggedIn = false
             )
         }
+        showSnackbar("Sesión cerrada correctamente")
+    }
+
+    // --- Feedback & Mensajes Toast / Snackbar ---
+    fun showSnackbar(message: String) {
+        _uiState.update { it.copy(userSnackbarMessage = message) }
+    }
+
+    fun clearSnackbar() {
+        _uiState.update { it.copy(userSnackbarMessage = null) }
+    }
+
+    fun clearError() {
+        _uiState.update { it.copy(errorMessage = null) }
+    }
+
+    fun clearHistory() {
+        _history.value = emptyList()
+        showSnackbar("Historial limpiado. Estado Vacío activado.")
+    }
+
+    fun generateTestReading() {
+        processNewReading(25.0f, 62.0f, 80.0f)
+        showSnackbar("Primera lectura registrada con éxito")
     }
 
     // --- Perfil y Ajustes ---

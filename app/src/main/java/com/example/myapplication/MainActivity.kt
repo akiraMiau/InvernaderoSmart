@@ -13,6 +13,7 @@ import androidx.compose.runtime.getValue
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.myapplication.data.AppTheme
 import com.example.myapplication.ui.GreenhouseViewModel
+import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import com.example.myapplication.ui.MainGreenhouseScreen
 import com.example.myapplication.ui.theme.MyApplicationTheme
 
@@ -25,6 +26,7 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        val splashScreen = installSplashScreen()
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
 

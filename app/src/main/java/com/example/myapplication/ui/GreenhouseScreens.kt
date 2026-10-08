@@ -13,9 +13,11 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -65,21 +67,41 @@ fun MainGreenhouseScreen(
     val uiState by viewModel.uiState.collectAsState()
     val history by viewModel.history.collectAsState()
 
+    val snackbarHostState = remember { SnackbarHostState() }
+    val scope = rememberCoroutineScope()
+
     var selectedTab by remember { mutableIntStateOf(0) }
 
-    // Flujo principal: Splash (Carga) -> Tutorial -> Autenticación (Login/SSO) -> Panel Principal
+    // Escuchar mensajes de retroalimentación (Microinteracciones)
+    LaunchedEffect(uiState.userSnackbarMessage) {
+        uiState.userSnackbarMessage?.let { message ->
+            scope.launch {
+                snackbarHostState.showSnackbar(
+                    message = message,
+                    duration = SnackbarDuration.Short
+                )
+            }
+            viewModel.clearSnackbar()
+        }
+    }
+
+    // Flujo principal: Splash (Carga) -> Onboarding (Tutorial) -> Autenticación (Login/SSO) -> Panel Principal
     when {
         uiState.isLoading -> {
             SplashScreen()
         }
         uiState.showTutorial -> {
-            TutorialScreen(onFinish = { viewModel.dismissTutorial() })
+            TutorialScreen(onFinish = {
+                viewModel.dismissTutorial()
+                viewModel.showSnackbar("¡Onboarding completado! Por favor inicia sesión.")
+            })
         }
         !uiState.isLoggedIn -> {
             AuthScreen(viewModel = viewModel)
         }
         else -> {
             Scaffold(
+                snackbarHost = { SnackbarHost(hostState = snackbarHostState) },
                 topBar = {
                     TopAppBar(
                         title = {
@@ -115,7 +137,10 @@ fun MainGreenhouseScreen(
                                 )
                                 Switch(
                                     checked = uiState.isSimulationMode,
-                                    onCheckedChange = { viewModel.setSimulationMode(it) }
+                                    onCheckedChange = {
+                                        viewModel.setSimulationMode(it)
+                                        viewModel.showSnackbar(if (it) "Modo Simulación activado" else "Modo Bluetooth activado")
+                                    }
                                 )
                             }
                         }
@@ -126,31 +151,31 @@ fun MainGreenhouseScreen(
                         NavigationBarItem(
                             selected = selectedTab == 0,
                             onClick = { selectedTab = 0 },
-                            icon = { Icon(Icons.Default.Dashboard, contentDescription = "Dashboard") },
+                            icon = { Icon(Icons.Default.Dashboard, contentDescription = "Pestaña Monitoreo Dashboard") },
                             label = { Text("Monitoreo") }
                         )
                         NavigationBarItem(
                             selected = selectedTab == 1,
                             onClick = { selectedTab = 1 },
-                            icon = { Icon(Icons.Default.Tune, contentDescription = "Control") },
+                            icon = { Icon(Icons.Default.Tune, contentDescription = "Pestaña Control de Escotilla") },
                             label = { Text("Control") }
                         )
                         NavigationBarItem(
                             selected = selectedTab == 2,
                             onClick = { selectedTab = 2 },
-                            icon = { Icon(Icons.Default.ShowChart, contentDescription = "Historial") },
+                            icon = { Icon(Icons.Default.ShowChart, contentDescription = "Pestaña Historial de Sensores") },
                             label = { Text("Historial") }
                         )
                         NavigationBarItem(
                             selected = selectedTab == 3,
                             onClick = { selectedTab = 3 },
-                            icon = { Icon(Icons.Default.Bluetooth, contentDescription = "Conexión") },
+                            icon = { Icon(Icons.Default.Bluetooth, contentDescription = "Pestaña Conexión Bluetooth") },
                             label = { Text("Conexión") }
                         )
                         NavigationBarItem(
                             selected = selectedTab == 4,
                             onClick = { selectedTab = 4 },
-                            icon = { Icon(Icons.Default.Person, contentDescription = "Perfil") },
+                            icon = { Icon(Icons.Default.Person, contentDescription = "Pestaña Perfil y Ajustes") },
                             label = { Text("Perfil") }
                         )
                     }
@@ -162,28 +187,60 @@ fun MainGreenhouseScreen(
                         .padding(innerPadding)
                 ) {
                     when (selectedTab) {
-                        0 -> DashboardTab(uiState = uiState)
+                        0 -> DashboardTab(
+                            uiState = uiState,
+                            onGoToConnection = { selectedTab = 3 }
+                        )
                         1 -> ControlTab(
                             uiState = uiState,
-                            onModeChange = { viewModel.setControlMode(it) },
-                            onHatchToggle = { viewModel.toggleHatchManual(it) },
-                            onThresholdChange = { viewModel.updateTemperatureThreshold(it) }
+                            onModeChange = {
+                                viewModel.setControlMode(it)
+                                viewModel.showSnackbar("Modo cambiado a ${if (it == ControlMode.AUTOMATIC) "Automático" else "Manual"}")
+                            },
+                            onHatchToggle = {
+                                viewModel.toggleHatchManual(it)
+                                viewModel.showSnackbar(if (it) "Comando: Abrir Escotilla enviado" else "Comando: Cerrar Escotilla enviado")
+                            },
+                            onThresholdChange = {
+                                viewModel.updateTemperatureThreshold(it)
+                                viewModel.showSnackbar("Umbral actualizado a ${formatTemp(it, uiState.appPreferences.tempUnit)}")
+                            }
                         )
-                        2 -> HistoryTab(history = history, unit = uiState.appPreferences.tempUnit)
+                        2 -> HistoryTab(
+                            history = history,
+                            unit = uiState.appPreferences.tempUnit,
+                            onGenerateTest = { viewModel.generateTestReading() },
+                            onClearHistory = { viewModel.clearHistory() }
+                        )
                         3 -> ConnectionTab(
                             uiState = uiState,
                             pairedDevices = viewModel.getPairedBluetoothDevices(),
-                            onConnectDevice = { viewModel.connectToBluetoothDevice(it) },
-                            onDisconnect = { viewModel.disconnectBluetooth() },
-                            onToggleSimulation = { viewModel.setSimulationMode(it) }
+                            onConnectDevice = { device ->
+                                viewModel.connectToBluetoothDevice(device)
+                                viewModel.showSnackbar("Conectando con dispositivo Bluetooth...")
+                            },
+                            onDisconnect = {
+                                viewModel.disconnectBluetooth()
+                                viewModel.showSnackbar("Bluetooth desconectado")
+                            },
+                            onToggleSimulation = {
+                                viewModel.setSimulationMode(it)
+                                viewModel.showSnackbar(if (it) "Modo Simulación activado" else "Buscando dispositivos físicos")
+                            },
+                            onRetryConnection = {
+                                viewModel.clearError()
+                                viewModel.showSnackbar("Reintentando conexión Bluetooth...")
+                            }
                         )
                         4 -> ProfileTab(
                             uiState = uiState,
                             onUpdateProfile = { name, email, phone ->
                                 viewModel.updateUserProfile(name, email, phone)
+                                viewModel.showSnackbar("Perfil actualizado correctamente")
                             },
                             onUpdatePreferences = { prefs ->
                                 viewModel.updatePreferences(prefs)
+                                viewModel.showSnackbar("Preferencias guardadas")
                             },
                             onReplayTutorial = {
                                 viewModel.replayTutorial()
@@ -194,6 +251,197 @@ fun MainGreenhouseScreen(
                         )
                     }
                 }
+            }
+        }
+    }
+}
+
+// ==========================================
+// BANNER OFFLINE / MODO DESCONECTADO
+// ==========================================
+
+@Composable
+fun OfflineBanner(
+    isSimulationMode: Boolean,
+    isConnected: Boolean,
+    onGoToConnection: () -> Unit
+) {
+    if (!isConnected) {
+        Card(
+            colors = CardDefaults.cardColors(containerColor = Color(0xFFFFF3E0)),
+            border = CardDefaults.outlinedCardBorder().copy(brush = SolidColor(Color(0xFFFFB74D))),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(bottom = 12.dp)
+        ) {
+            Row(
+                modifier = Modifier
+                    .padding(12.dp)
+                    .fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Row(
+                    modifier = Modifier.weight(1f),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.CloudOff,
+                        contentDescription = "Sin conexión Bluetooth",
+                        tint = Color(0xFFE65100),
+                        modifier = Modifier.size(24.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Column {
+                        Text(
+                            text = if (isSimulationMode) "Modo Simulación / Offline" else "Bluetooth Desconectado",
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 12.sp,
+                            color = Color(0xFFE65100)
+                        )
+                        Text(
+                            text = if (isSimulationMode) "Mostrando datos simulados en tiempo real." else "Mostrando últimos datos guardados.",
+                            fontSize = 11.sp,
+                            color = Color.DarkGray
+                        )
+                    }
+                }
+
+                TextButton(onClick = onGoToConnection) {
+                    Text("Conectar", fontWeight = FontWeight.Bold, color = Color(0xFFE65100))
+                }
+            }
+        }
+    }
+}
+
+// ==========================================
+// PANTALLAS DE ESTADO (EMPTY STATE & ERROR STATE)
+// ==========================================
+
+@Composable
+fun EmptyStateView(
+    title: String,
+    description: String,
+    icon: ImageVector,
+    actionText: String? = null,
+    onAction: (() -> Unit)? = null
+) {
+    Card(
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 16.dp)
+    ) {
+        Column(
+            modifier = Modifier
+                .padding(24.dp)
+                .fillMaxWidth(),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(64.dp)
+                    .clip(CircleShape)
+                    .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = icon,
+                    contentDescription = title,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(36.dp)
+                )
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            Text(
+                text = title,
+                fontSize = 18.sp,
+                fontWeight = FontWeight.Bold,
+                textAlign = TextAlign.Center
+            )
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            Text(
+                text = description,
+                fontSize = 13.sp,
+                color = Color.Gray,
+                textAlign = TextAlign.Center
+            )
+
+            if (actionText != null && onAction != null) {
+                Spacer(modifier = Modifier.height(16.dp))
+                Button(
+                    onClick = onAction,
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Icon(Icons.Default.Add, contentDescription = null)
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(actionText)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun ErrorStateView(
+    title: String,
+    description: String,
+    onRetry: () -> Unit
+) {
+    Card(
+        colors = CardDefaults.cardColors(containerColor = Color(0xFFFFEBEE)),
+        border = CardDefaults.outlinedCardBorder().copy(brush = SolidColor(Color(0xFFEF5350))),
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 12.dp)
+    ) {
+        Column(
+            modifier = Modifier
+                .padding(20.dp)
+                .fillMaxWidth(),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Icon(
+                imageVector = Icons.Default.Warning,
+                contentDescription = "Error de conexión",
+                tint = Color(0xFFD32F2F),
+                modifier = Modifier.size(40.dp)
+            )
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            Text(
+                text = title,
+                fontWeight = FontWeight.Bold,
+                fontSize = 16.sp,
+                color = Color(0xFFD32F2F),
+                textAlign = TextAlign.Center
+            )
+
+            Spacer(modifier = Modifier.height(6.dp))
+
+            Text(
+                text = description,
+                fontSize = 12.sp,
+                color = Color(0xFFB71C1C),
+                textAlign = TextAlign.Center
+            )
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            Button(
+                onClick = onRetry,
+                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFD32F2F))
+            ) {
+                Icon(Icons.Default.Refresh, contentDescription = "Reintentar")
+                Spacer(modifier = Modifier.width(6.dp))
+                Text("Reintentar Conexión")
             }
         }
     }
@@ -236,7 +484,7 @@ fun SplashScreen() {
             ) {
                 Icon(
                     imageVector = Icons.Default.Eco,
-                    contentDescription = "Logo Invernadero",
+                    contentDescription = "Logo Invernadero Smart",
                     modifier = Modifier
                         .size(80.dp)
                         .scale(scale),
@@ -285,7 +533,7 @@ fun SplashScreen() {
 }
 
 // ==========================================
-// PANTALLAS DE AUTENTICACIÓN (LOGIN / REGISTRO / RECUPERACIÓN / SSO)
+// PANTALLAS DE AUTENTICACIÓN (LOGIN / REGISTRO / RECUPERACIÓN / SSO / BIOMETRÍA)
 // ==========================================
 
 enum class AuthMode {
@@ -305,23 +553,31 @@ fun AuthScreen(viewModel: GreenhouseViewModel) {
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(24.dp),
+                .padding(24.dp)
+                .imePadding(),
             contentAlignment = Alignment.Center
         ) {
             when (authMode) {
                 AuthMode.LOGIN -> LoginContent(
                     onLogin = { email, pass ->
-                        viewModel.login(email, pass)
+                        if (viewModel.login(email, pass)) {
+                            viewModel.showSnackbar("¡Bienvenido de nuevo!")
+                        }
                     },
                     onSSO = { provider ->
                         viewModel.loginWithSSO(provider)
+                    },
+                    onBiometricLogin = {
+                        viewModel.loginWithBiometrics()
                     },
                     onForgotPassword = { authMode = AuthMode.RECOVERY },
                     onNavigateToRegister = { authMode = AuthMode.REGISTER }
                 )
                 AuthMode.REGISTER -> RegisterContent(
                     onRegister = { name, email, pass ->
-                        viewModel.register(name, email, pass)
+                        if (viewModel.register(name, email, pass)) {
+                            viewModel.showSnackbar("¡Cuenta creada con éxito!")
+                        }
                     },
                     onSSO = { provider ->
                         viewModel.loginWithSSO(provider)
@@ -340,6 +596,7 @@ fun AuthScreen(viewModel: GreenhouseViewModel) {
 fun LoginContent(
     onLogin: (String, String) -> Unit,
     onSSO: (String) -> Unit,
+    onBiometricLogin: () -> Unit,
     onForgotPassword: () -> Unit,
     onNavigateToRegister: () -> Unit
 ) {
@@ -348,9 +605,12 @@ fun LoginContent(
     var isPasswordVisible by remember { mutableStateOf(false) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
 
+    val scrollState = rememberScrollState()
+
     Column(
         modifier = Modifier
             .fillMaxWidth()
+            .verticalScroll(scrollState)
             .padding(vertical = 16.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
@@ -363,7 +623,7 @@ fun LoginContent(
         ) {
             Icon(
                 imageVector = Icons.Default.Eco,
-                contentDescription = null,
+                contentDescription = "Ícono de la aplicación",
                 modifier = Modifier.size(40.dp),
                 tint = MaterialTheme.colorScheme.primary
             )
@@ -393,7 +653,7 @@ fun LoginContent(
                 errorMessage = null
             },
             label = { Text("Correo Electrónico") },
-            leadingIcon = { Icon(Icons.Default.Email, contentDescription = null) },
+            leadingIcon = { Icon(Icons.Default.Email, contentDescription = "Ícono correo") },
             singleLine = true,
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
             modifier = Modifier.fillMaxWidth()
@@ -408,12 +668,12 @@ fun LoginContent(
                 errorMessage = null
             },
             label = { Text("Contraseña") },
-            leadingIcon = { Icon(Icons.Default.Lock, contentDescription = null) },
+            leadingIcon = { Icon(Icons.Default.Lock, contentDescription = "Ícono candado") },
             trailingIcon = {
                 IconButton(onClick = { isPasswordVisible = !isPasswordVisible }) {
                     Icon(
                         imageVector = if (isPasswordVisible) Icons.Default.VisibilityOff else Icons.Default.Visibility,
-                        contentDescription = "Ver contraseña"
+                        contentDescription = "Alternar visibilidad de contraseña"
                     )
                 }
             },
@@ -451,6 +711,21 @@ fun LoginContent(
             shape = RoundedCornerShape(12.dp)
         ) {
             Text("Iniciar Sesión", fontSize = 16.sp, fontWeight = FontWeight.Bold)
+        }
+
+        Spacer(modifier = Modifier.height(10.dp))
+
+        // Botón de Autenticación Biométrica (Huella / FaceID)
+        OutlinedButton(
+            onClick = onBiometricLogin,
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(48.dp),
+            shape = RoundedCornerShape(12.dp)
+        ) {
+            Icon(Icons.Default.Fingerprint, contentDescription = "Autenticación biométrica")
+            Spacer(modifier = Modifier.width(8.dp))
+            Text("Ingresar con Huella / Biometría", fontSize = 14.sp)
         }
 
         Spacer(modifier = Modifier.height(20.dp))
@@ -515,9 +790,12 @@ fun RegisterContent(
     var isPasswordVisible by remember { mutableStateOf(false) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
 
+    val scrollState = rememberScrollState()
+
     Column(
         modifier = Modifier
             .fillMaxWidth()
+            .verticalScroll(scrollState)
             .padding(vertical = 16.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
@@ -530,7 +808,7 @@ fun RegisterContent(
         ) {
             Icon(
                 imageVector = Icons.Default.PersonAdd,
-                contentDescription = null,
+                contentDescription = "Ícono de registro",
                 modifier = Modifier.size(36.dp),
                 tint = MaterialTheme.colorScheme.secondary
             )
@@ -557,7 +835,7 @@ fun RegisterContent(
             value = name,
             onValueChange = { name = it; errorMessage = null },
             label = { Text("Nombre Completo") },
-            leadingIcon = { Icon(Icons.Default.Person, contentDescription = null) },
+            leadingIcon = { Icon(Icons.Default.Person, contentDescription = "Nombre") },
             singleLine = true,
             modifier = Modifier.fillMaxWidth()
         )
@@ -568,7 +846,7 @@ fun RegisterContent(
             value = email,
             onValueChange = { email = it; errorMessage = null },
             label = { Text("Correo Electrónico") },
-            leadingIcon = { Icon(Icons.Default.Email, contentDescription = null) },
+            leadingIcon = { Icon(Icons.Default.Email, contentDescription = "Correo") },
             singleLine = true,
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
             modifier = Modifier.fillMaxWidth()
@@ -580,7 +858,7 @@ fun RegisterContent(
             value = password,
             onValueChange = { password = it; errorMessage = null },
             label = { Text("Contraseña") },
-            leadingIcon = { Icon(Icons.Default.Lock, contentDescription = null) },
+            leadingIcon = { Icon(Icons.Default.Lock, contentDescription = "Contraseña") },
             trailingIcon = {
                 IconButton(onClick = { isPasswordVisible = !isPasswordVisible }) {
                     Icon(
@@ -601,7 +879,7 @@ fun RegisterContent(
             value = confirmPassword,
             onValueChange = { confirmPassword = it; errorMessage = null },
             label = { Text("Confirmar Contraseña") },
-            leadingIcon = { Icon(Icons.Default.LockReset, contentDescription = null) },
+            leadingIcon = { Icon(Icons.Default.LockReset, contentDescription = "Confirmar contraseña") },
             singleLine = true,
             visualTransformation = PasswordVisualTransformation(),
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
@@ -678,7 +956,7 @@ fun RecoveryContent(
         ) {
             Icon(
                 imageVector = Icons.Default.LockReset,
-                contentDescription = null,
+                contentDescription = "Recuperar clave",
                 modifier = Modifier.size(36.dp),
                 tint = Color(0xFFE65100)
             )
@@ -716,7 +994,7 @@ fun RecoveryContent(
                 ) {
                     Icon(
                         imageVector = Icons.Default.CheckCircle,
-                        contentDescription = null,
+                        contentDescription = "Éxito al enviar",
                         tint = Color(0xFF2E7D32),
                         modifier = Modifier.size(40.dp)
                     )
@@ -751,7 +1029,7 @@ fun RecoveryContent(
                 value = email,
                 onValueChange = { email = it },
                 label = { Text("Correo Electrónico Registrado") },
-                leadingIcon = { Icon(Icons.Default.Email, contentDescription = null) },
+                leadingIcon = { Icon(Icons.Default.Email, contentDescription = "Correo registrado") },
                 singleLine = true,
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
                 modifier = Modifier.fillMaxWidth()
@@ -779,7 +1057,7 @@ fun RecoveryContent(
                 onClick = onBackToLogin,
                 modifier = Modifier.fillMaxWidth()
             ) {
-                Icon(Icons.Default.ArrowBack, contentDescription = null)
+                Icon(Icons.Default.ArrowBack, contentDescription = "Volver atrás")
                 Spacer(modifier = Modifier.width(6.dp))
                 Text("Volver")
             }
@@ -806,14 +1084,14 @@ fun SSOButton(
             .fillMaxWidth()
             .height(48.dp)
     ) {
-        Icon(imageVector = icon, contentDescription = null)
+        Icon(imageVector = icon, contentDescription = text)
         Spacer(modifier = Modifier.width(10.dp))
         Text(text, fontSize = 14.sp, fontWeight = FontWeight.Medium)
     }
 }
 
 // ==========================================
-// PANTALLA DE TUTORIAL
+// PANTALLA DE TUTORIAL / ONBOARDING (CON CONTEXTO DE PERMISOS CRÍTICOS)
 // ==========================================
 
 @Composable
@@ -827,20 +1105,20 @@ fun TutorialScreen(onFinish: () -> Unit) {
         ),
         TutorialPageData(
             "Monitoreo en Tiempo Real",
-            "Observa la temperatura, humedad y luz. Recibirás alertas si el calor supera el límite establecido.",
+            "Observa la temperatura, humedad y luz. Recibirás alertas inmediatas si el calor supera el límite.",
             Icons.Default.Dashboard,
             Color(0xFF2196F3)
         ),
         TutorialPageData(
-            "Control Total",
+            "Control Total y Servomotores",
             "Cambia entre modo Automático (Arduino decide) o Manual (tú controlas la escotilla) y ajusta los umbrales.",
             Icons.Default.Tune,
             Color(0xFFFF9800)
         ),
         TutorialPageData(
-            "Conexión Bluetooth",
-            "Conéctate a tu módulo HC-05/ESP32 en la pestaña de Conexión o usa el modo Simulación para probar.",
-            Icons.Default.Bluetooth,
+            "Permisos Críticos de la App",
+            "🔑 Para funcionar correctamente, requerimos acceso a Bluetooth (conectar al Arduino HC-05/ESP32) y Notificaciones (alertas críticas de emergencia).",
+            Icons.Default.Security,
             Color(0xFF673AB7)
         )
     )
@@ -890,7 +1168,7 @@ fun TutorialScreen(onFinish: () -> Unit) {
                     }
                 }
 
-                // Botón Siguiente / Empezar
+                // Botón Siguiente / Conceder Permisos
                 Button(
                     onClick = {
                         if (pagerState.currentPage < pages.size - 1) {
@@ -903,7 +1181,7 @@ fun TutorialScreen(onFinish: () -> Unit) {
                     },
                     shape = RoundedCornerShape(12.dp)
                 ) {
-                    Text(if (pagerState.currentPage < pages.size - 1) "Siguiente" else "¡Ir a Iniciar Sesión!")
+                    Text(if (pagerState.currentPage < pages.size - 1) "Siguiente" else "¡Conceder Permisos e Ir a Iniciar Sesión!")
                 }
             }
         }
@@ -928,7 +1206,7 @@ fun TutorialPageContent(page: TutorialPageData) {
         ) {
             Icon(
                 imageVector = page.icon,
-                contentDescription = null,
+                contentDescription = page.title,
                 modifier = Modifier.size(80.dp),
                 tint = page.color
             )
@@ -948,7 +1226,7 @@ fun TutorialPageContent(page: TutorialPageData) {
 
         Text(
             text = page.description,
-            fontSize = 16.sp,
+            fontSize = 15.sp,
             textAlign = TextAlign.Center,
             color = Color.Gray,
             lineHeight = 22.sp
@@ -968,7 +1246,10 @@ data class TutorialPageData(
 // ==========================================
 
 @Composable
-fun DashboardTab(uiState: GreenhouseState) {
+fun DashboardTab(
+    uiState: GreenhouseState,
+    onGoToConnection: () -> Unit
+) {
     val isTempHigh = uiState.temperature >= uiState.tempThreshold
     val tempUnit = uiState.appPreferences.tempUnit
 
@@ -978,6 +1259,15 @@ fun DashboardTab(uiState: GreenhouseState) {
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
+        // Banner de Estado Offline / Simulación
+        item {
+            OfflineBanner(
+                isSimulationMode = uiState.isSimulationMode,
+                isConnected = uiState.isConnected,
+                onGoToConnection = onGoToConnection
+            )
+        }
+
         // Alerta Crítica en Tiempo Real
         item {
             AnimatedVisibility(visible = isTempHigh) {
@@ -994,7 +1284,7 @@ fun DashboardTab(uiState: GreenhouseState) {
                     ) {
                         Icon(
                             imageVector = Icons.Default.Warning,
-                            contentDescription = "Alerta",
+                            contentDescription = "Alerta de temperatura alta",
                             tint = Color(0xFFD32F2F),
                             modifier = Modifier.size(36.dp)
                         )
@@ -1036,7 +1326,7 @@ fun DashboardTab(uiState: GreenhouseState) {
             SensorCard(
                 title = "Temperatura Ambiente",
                 value = formatTemp(uiState.temperature, tempUnit),
-                subtitle = "Umbral: ${formatTemp(uiState.tempThreshold, tempUnit)}",
+                subtitle = "Umbral Configurado: ${formatTemp(uiState.tempThreshold, tempUnit)}",
                 icon = Icons.Default.Thermostat,
                 cardColor = if (isTempHigh) Color(0xFFFFE0B2) else Color(0xFFE8F5E9),
                 iconColor = if (isTempHigh) Color(0xFFE65100) else Color(0xFF2E7D32)
@@ -1047,7 +1337,7 @@ fun DashboardTab(uiState: GreenhouseState) {
             SensorCard(
                 title = "Humedad Relativa",
                 value = "${String.format(Locale.US, "%.1f", uiState.humidity)} %",
-                subtitle = "Sensor DHT11",
+                subtitle = "Sensor DHT11 Digital",
                 icon = Icons.Default.WaterDrop,
                 cardColor = Color(0xFFE3F2FD),
                 iconColor = Color(0xFF1565C0)
@@ -1058,7 +1348,7 @@ fun DashboardTab(uiState: GreenhouseState) {
             SensorCard(
                 title = "Nivel de Luz (LDR)",
                 value = "${String.format(Locale.US, "%.0f", uiState.lightLevel)} %",
-                subtitle = "Sensor Fotoresistencia",
+                subtitle = "Sensor Fotoresistencia Lux",
                 icon = Icons.Default.WbSunny,
                 cardColor = Color(0xFFFFFDE7),
                 iconColor = Color(0xFFF57F17)
@@ -1116,7 +1406,7 @@ fun HatchStatusCard(hatchOpen: Boolean, controlMode: ControlMode) {
             ) {
                 Icon(
                     imageVector = if (hatchOpen) Icons.Default.DoorSliding else Icons.Default.Lock,
-                    contentDescription = "Escotilla",
+                    contentDescription = if (hatchOpen) "Escotilla abierta" else "Escotilla cerrada",
                     tint = Color.White,
                     modifier = Modifier.size(36.dp)
                 )
@@ -1277,7 +1567,7 @@ fun ControlTab(
                             colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFB8C00)),
                             modifier = Modifier.weight(1f)
                         ) {
-                            Icon(Icons.Default.DoorSliding, contentDescription = null)
+                            Icon(Icons.Default.DoorSliding, contentDescription = "Abrir escotilla")
                             Spacer(modifier = Modifier.width(6.dp))
                             Text("Abrir")
                         }
@@ -1288,7 +1578,7 @@ fun ControlTab(
                             colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF4CAF50)),
                             modifier = Modifier.weight(1f)
                         ) {
-                            Icon(Icons.Default.Lock, contentDescription = null)
+                            Icon(Icons.Default.Lock, contentDescription = "Cerrar escotilla")
                             Spacer(modifier = Modifier.width(6.dp))
                             Text("Cerrar")
                         }
@@ -1364,114 +1654,144 @@ fun ControlTab(
 }
 
 // ==========================================
-// PESTAÑA HISTORIAL
+// PESTAÑA HISTORIAL (CON EMPTY STATE)
 // ==========================================
 
 @Composable
-fun HistoryTab(history: List<SensorReading>, unit: TempUnit) {
+fun HistoryTab(
+    history: List<SensorReading>,
+    unit: TempUnit,
+    onGenerateTest: () -> Unit,
+    onClearHistory: () -> Unit
+) {
     Column(
         modifier = Modifier
             .fillMaxSize()
             .padding(16.dp)
     ) {
-        Text(
-            "Evolución Histórica",
-            fontWeight = FontWeight.Bold,
-            fontSize = 20.sp
-        )
-        Text(
-            "Gráfico lineal de Temperatura (${if (unit == TempUnit.FAHRENHEIT) "°F" else "°C"}) y Humedad (%)",
-            fontSize = 12.sp,
-            color = Color.Gray
-        )
-
-        Spacer(modifier = Modifier.height(16.dp))
-
-        // Leyenda
         Row(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceEvenly
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Box(
-                    modifier = Modifier
-                        .size(12.dp)
-                        .background(Color(0xFFE53935), CircleShape)
+            Column {
+                Text(
+                    "Evolución Histórica",
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 20.sp
                 )
-                Spacer(modifier = Modifier.width(6.dp))
-                Text("Temperatura", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                Text(
+                    "Gráfico de Temperatura (${if (unit == TempUnit.FAHRENHEIT) "°F" else "°C"}) y Humedad (%)",
+                    fontSize = 12.sp,
+                    color = Color.Gray
+                )
             }
 
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Box(
-                    modifier = Modifier
-                        .size(12.dp)
-                        .background(Color(0xFF1E88E5), CircleShape)
-                )
-                Spacer(modifier = Modifier.width(6.dp))
-                Text("Humedad (%)", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+            if (history.isNotEmpty()) {
+                IconButton(onClick = onClearHistory) {
+                    Icon(Icons.Default.DeleteOutline, contentDescription = "Limpiar historial")
+                }
             }
-        }
-
-        Spacer(modifier = Modifier.height(12.dp))
-
-        // Canvas Gráfico
-        Card(
-            colors = CardDefaults.cardColors(containerColor = Color.White),
-            border = CardDefaults.outlinedCardBorder(),
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(220.dp)
-        ) {
-            LineChartCanvas(history = history)
         }
 
         Spacer(modifier = Modifier.height(16.dp))
 
-        Text(
-            "Registros Recientes",
-            fontWeight = FontWeight.Bold,
-            fontSize = 16.sp
-        )
-
-        Spacer(modifier = Modifier.height(8.dp))
-
-        val sdf = remember { SimpleDateFormat("HH:mm:ss", Locale.getDefault()) }
-
-        LazyColumn(
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-            modifier = Modifier.fillMaxSize()
-        ) {
-            items(history.reversed()) { item ->
-                Card(
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Row(
+        if (history.isEmpty()) {
+            // ESTADO VACÍO (EMPTY STATE)
+            EmptyStateView(
+                title = "Aún no hay lecturas registradas",
+                description = "El historial de sensores está vacío. Inicia la simulación o conecta tu módulo Arduino para comenzar a registrar datos.",
+                icon = Icons.Default.ShowChart,
+                actionText = "Generar Lectura de Prueba",
+                onAction = onGenerateTest
+            )
+        } else {
+            // Leyenda
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceEvenly
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(
                         modifier = Modifier
-                            .padding(12.dp)
-                            .fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
+                            .size(12.dp)
+                            .background(Color(0xFFE53935), CircleShape)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text("Temperatura", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                }
+
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(
+                        modifier = Modifier
+                            .size(12.dp)
+                            .background(Color(0xFF1E88E5), CircleShape)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text("Humedad (%)", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                }
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            // Canvas Gráfico
+            Card(
+                colors = CardDefaults.cardColors(containerColor = Color.White),
+                border = CardDefaults.outlinedCardBorder(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(200.dp)
+            ) {
+                LineChartCanvas(history = history)
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            Text(
+                "Registros Recientes",
+                fontWeight = FontWeight.Bold,
+                fontSize = 16.sp
+            )
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            val sdf = remember { SimpleDateFormat("HH:mm:ss", Locale.getDefault()) }
+
+            LazyColumn(
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.fillMaxSize()
+            ) {
+                items(history.reversed()) { item ->
+                    Card(
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+                        modifier = Modifier.fillMaxWidth()
                     ) {
-                        Text(
-                            sdf.format(Date(item.timestamp)),
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = Color.Gray
-                        )
-                        Text(
-                            "Temp: ${formatTemp(item.temperature, unit)}",
-                            fontSize = 13.sp,
-                            color = Color(0xFFD32F2F),
-                            fontWeight = FontWeight.Bold
-                        )
-                        Text(
-                            "Hum: ${String.format(Locale.US, "%.1f", item.humidity)}%",
-                            fontSize = 13.sp,
-                            color = Color(0xFF1976D2),
-                            fontWeight = FontWeight.Bold
-                        )
+                        Row(
+                            modifier = Modifier
+                                .padding(12.dp)
+                                .fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                sdf.format(Date(item.timestamp)),
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color.Gray
+                            )
+                            Text(
+                                "Temp: ${formatTemp(item.temperature, unit)}",
+                                fontSize = 13.sp,
+                                color = Color(0xFFD32F2F),
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text(
+                                "Hum: ${String.format(Locale.US, "%.1f", item.humidity)}%",
+                                fontSize = 13.sp,
+                                color = Color(0xFF1976D2),
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
                     }
                 }
             }
@@ -1481,12 +1801,7 @@ fun HistoryTab(history: List<SensorReading>, unit: TempUnit) {
 
 @Composable
 fun LineChartCanvas(history: List<SensorReading>) {
-    if (history.isEmpty()) {
-        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            Text("Esperando datos...", color = Color.Gray)
-        }
-        return
-    }
+    if (history.isEmpty()) return
 
     Canvas(modifier = Modifier.fillMaxSize().padding(16.dp)) {
         val width = size.width
@@ -1548,7 +1863,7 @@ fun LineChartCanvas(history: List<SensorReading>) {
 }
 
 // ==========================================
-// PESTAÑA CONEXIÓN
+// PESTAÑA CONEXIÓN (CON ERROR STATE Y EMPTY STATE)
 // ==========================================
 
 @SuppressLint("MissingPermission")
@@ -1558,7 +1873,8 @@ fun ConnectionTab(
     pairedDevices: List<BluetoothDevice>,
     onConnectDevice: (BluetoothDevice) -> Unit,
     onDisconnect: () -> Unit,
-    onToggleSimulation: (Boolean) -> Unit
+    onToggleSimulation: (Boolean) -> Unit,
+    onRetryConnection: () -> Unit
 ) {
     LazyColumn(
         modifier = Modifier
@@ -1568,10 +1884,21 @@ fun ConnectionTab(
     ) {
         item {
             Text(
-                "Conexión con Arduino",
+                "Conexión con Arduino / ESP32",
                 fontWeight = FontWeight.Bold,
                 fontSize = 20.sp
             )
+        }
+
+        // Estado de Error
+        uiState.errorMessage?.let { error ->
+            item {
+                ErrorStateView(
+                    title = "Fallo al Conectar con Bluetooth",
+                    description = error,
+                    onRetry = onRetryConnection
+                )
+            }
         }
 
         // Estado de Simulación / Conexión Real
@@ -1587,10 +1914,10 @@ fun ConnectionTab(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Column {
+                    Column(modifier = Modifier.weight(1f)) {
                         Text("Modo Simulación Interna", fontWeight = FontWeight.Bold)
                         Text(
-                            "Genera datos automáticos sin requerir Arduino físico.",
+                            "Genera datos automáticos sin requerir hardware físico.",
                             fontSize = 12.sp,
                             color = Color.Gray
                         )
@@ -1614,10 +1941,10 @@ fun ConnectionTab(
 
         if (pairedDevices.isEmpty()) {
             item {
-                Text(
-                    "No se encontraron dispositivos emparejados. Empareja el módulo HC-05 o ESP32 desde los ajustes de Bluetooth de tu teléfono.",
-                    fontSize = 12.sp,
-                    color = Color.Gray
+                EmptyStateView(
+                    title = "Sin dispositivos emparejados",
+                    description = "No se encontraron módulos Bluetooth HC-05 o ESP32 emparejados. Asegúrate de encender el Bluetooth y vincular tu dispositivo desde los Ajustes del sistema.",
+                    icon = Icons.Default.BluetoothSearching
                 )
             }
         } else {
@@ -1711,13 +2038,13 @@ fun ProfileTab(
     var emailInput by remember(user.email) { mutableStateOf(user.email) }
     var phoneInput by remember(user.phone) { mutableStateOf(user.phone) }
 
-    var showSavedSnackbar by remember { mutableStateOf(false) }
     var showTermsDialog by remember { mutableStateOf(false) }
 
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
-            .padding(16.dp),
+            .padding(16.dp)
+            .imePadding(),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
         // Encabezado de Usuario
@@ -1768,7 +2095,7 @@ fun ProfileTab(
                             leadingIcon = {
                                 Icon(
                                     imageVector = Icons.Default.VerifiedUser,
-                                    contentDescription = null,
+                                    contentDescription = "Proveedor verificado",
                                     modifier = Modifier.size(14.dp)
                                 )
                             }
@@ -1788,7 +2115,7 @@ fun ProfileTab(
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Icon(
                             Icons.Default.Person,
-                            contentDescription = null,
+                            contentDescription = "Información Personal",
                             tint = MaterialTheme.colorScheme.primary
                         )
                         Spacer(modifier = Modifier.width(8.dp))
@@ -1836,23 +2163,12 @@ fun ProfileTab(
                     Button(
                         onClick = {
                             onUpdateProfile(nameInput, emailInput, phoneInput)
-                            showSavedSnackbar = true
                         },
                         modifier = Modifier.align(Alignment.End)
                     ) {
-                        Icon(Icons.Default.Save, contentDescription = null)
+                        Icon(Icons.Default.Save, contentDescription = "Guardar cambios")
                         Spacer(modifier = Modifier.width(6.dp))
                         Text("Guardar Cambios")
-                    }
-
-                    if (showSavedSnackbar) {
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Text(
-                            "✓ Información de perfil actualizada correctamente.",
-                            color = Color(0xFF2E7D32),
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Bold
-                        )
                     }
                 }
             }
@@ -1868,7 +2184,7 @@ fun ProfileTab(
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Icon(
                             Icons.Default.Palette,
-                            contentDescription = null,
+                            contentDescription = "Preferencias",
                             tint = MaterialTheme.colorScheme.primary
                         )
                         Spacer(modifier = Modifier.width(8.dp))
@@ -1942,7 +2258,7 @@ fun ProfileTab(
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Icon(
                             Icons.Default.Notifications,
-                            contentDescription = null,
+                            contentDescription = "Ajustes notificaciones",
                             tint = MaterialTheme.colorScheme.primary
                         )
                         Spacer(modifier = Modifier.width(8.dp))
@@ -2027,7 +2343,7 @@ fun ProfileTab(
                             .padding(vertical = 8.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Icon(Icons.Default.Description, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                        Icon(Icons.Default.Description, contentDescription = "Términos de servicio", tint = MaterialTheme.colorScheme.primary)
                         Spacer(modifier = Modifier.width(12.dp))
                         Text(
                             "Términos de Servicio y Políticas de Privacidad",
@@ -2035,7 +2351,7 @@ fun ProfileTab(
                             fontWeight = FontWeight.Medium,
                             modifier = Modifier.weight(1f)
                         )
-                        Icon(Icons.Default.ChevronRight, contentDescription = null, tint = Color.Gray)
+                        Icon(Icons.Default.ChevronRight, contentDescription = "Ver más", tint = Color.Gray)
                     }
 
                     HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
@@ -2047,7 +2363,7 @@ fun ProfileTab(
                             .padding(vertical = 8.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Icon(Icons.Default.Help, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                        Icon(Icons.Default.Help, contentDescription = "Reactivar tutorial", tint = MaterialTheme.colorScheme.primary)
                         Spacer(modifier = Modifier.width(12.dp))
                         Text(
                             "Ver Tutorial de la App de Nuevo",
@@ -2055,7 +2371,7 @@ fun ProfileTab(
                             fontWeight = FontWeight.Medium,
                             modifier = Modifier.weight(1f)
                         )
-                        Icon(Icons.Default.ChevronRight, contentDescription = null, tint = Color.Gray)
+                        Icon(Icons.Default.ChevronRight, contentDescription = "Ver tutorial", tint = Color.Gray)
                     }
                 }
             }
@@ -2071,7 +2387,7 @@ fun ProfileTab(
                     .fillMaxWidth()
                     .height(50.dp)
             ) {
-                Icon(Icons.Default.Logout, contentDescription = null)
+                Icon(Icons.Default.Logout, contentDescription = "Cerrar sesión")
                 Spacer(modifier = Modifier.width(8.dp))
                 Text("Cerrar Sesión", fontSize = 16.sp, fontWeight = FontWeight.Bold)
             }
