@@ -39,6 +39,7 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.myapplication.data.AppColorScheme
 import com.example.myapplication.data.AppPreferences
 import com.example.myapplication.data.AppTheme
 import com.example.myapplication.data.ControlMode
@@ -2220,6 +2221,56 @@ fun ProfileTab(
                             onClick = { onUpdatePreferences(prefs.copy(theme = AppTheme.DARK)) },
                             label = { Text("Oscuro") },
                             modifier = Modifier.weight(1f)
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    Text("Estilo y Paleta de Colores", fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                    Spacer(modifier = Modifier.height(6.dp))
+
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            FilterChip(
+                                selected = prefs.colorSchemeStyle == AppColorScheme.GREEN_NATURE,
+                                onClick = { onUpdatePreferences(prefs.copy(colorSchemeStyle = AppColorScheme.GREEN_NATURE)) },
+                                label = { Text("🌱 Verde Naturaleza") },
+                                modifier = Modifier.weight(1f)
+                            )
+                            FilterChip(
+                                selected = prefs.colorSchemeStyle == AppColorScheme.BLUE_OCEAN,
+                                onClick = { onUpdatePreferences(prefs.copy(colorSchemeStyle = AppColorScheme.BLUE_OCEAN)) },
+                                label = { Text("🌊 Azul Océano") },
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            FilterChip(
+                                selected = prefs.colorSchemeStyle == AppColorScheme.ORANGE_SUNSET,
+                                onClick = { onUpdatePreferences(prefs.copy(colorSchemeStyle = AppColorScheme.ORANGE_SUNSET)) },
+                                label = { Text("🌅 Naranja Atardecer") },
+                                modifier = Modifier.weight(1f)
+                            )
+                            FilterChip(
+                                selected = prefs.colorSchemeStyle == AppColorScheme.PURPLE_NEON,
+                                onClick = { onUpdatePreferences(prefs.copy(colorSchemeStyle = AppColorScheme.PURPLE_NEON)) },
+                                label = { Text("🔮 Púrpura Smart") },
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
+
+                        FilterChip(
+                            selected = prefs.colorSchemeStyle == AppColorScheme.TEAL_CYAN,
+                            onClick = { onUpdatePreferences(prefs.copy(colorSchemeStyle = AppColorScheme.TEAL_CYAN)) },
+                            label = { Text("🧪 Turquesa Biotech") },
+                            modifier = Modifier.fillMaxWidth()
                         )
                     }
 

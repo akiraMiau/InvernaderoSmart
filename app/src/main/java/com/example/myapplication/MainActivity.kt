@@ -37,13 +37,10 @@ class MainActivity : ComponentActivity() {
             val viewModel: GreenhouseViewModel = viewModel()
             val uiState by viewModel.uiState.collectAsState()
 
-            val isDarkTheme = when (uiState.appPreferences.theme) {
-                AppTheme.DARK -> true
-                AppTheme.LIGHT -> false
-                AppTheme.SYSTEM -> isSystemInDarkTheme()
-            }
-
-            MyApplicationTheme(darkTheme = isDarkTheme) {
+            MyApplicationTheme(
+                appTheme = uiState.appPreferences.theme,
+                colorSchemeStyle = uiState.appPreferences.colorSchemeStyle
+            ) {
                 MainGreenhouseScreen(viewModel = viewModel)
             }
         }

@@ -18,6 +18,14 @@ enum class AppTheme {
     DARK
 }
 
+enum class AppColorScheme {
+    GREEN_NATURE,
+    BLUE_OCEAN,
+    ORANGE_SUNSET,
+    PURPLE_NEON,
+    TEAL_CYAN
+}
+
 enum class TempUnit {
     CELSIUS,
     FAHRENHEIT
@@ -33,6 +41,7 @@ data class UserProfile(
 
 data class AppPreferences(
     val theme: AppTheme = AppTheme.SYSTEM,
+    val colorSchemeStyle: AppColorScheme = AppColorScheme.GREEN_NATURE,
     val tempUnit: TempUnit = TempUnit.CELSIUS,
     val notifyTemperatureAlerts: Boolean = true,
     val notifyHatchAlerts: Boolean = true,
