@@ -74,6 +74,10 @@ data class GreenhouseState(
     val uiStatus: UiStatus = UiStatus.SUCCESS,
     val errorMessage: String? = null,
     val userSnackbarMessage: String? = null,
-    val isBiometricEnabled: Boolean = true
+    val isBiometricEnabled: Boolean = true,
+    val isAuthLoading: Boolean = false,
+    val authErrorMessage: String? = null,
+    val authSuccessMessage: String? = null,
+    val isAppUnlocked: Boolean = false // Estado independiente de desbloqueo local (Biometría), por defecto bloqueado
 )
 

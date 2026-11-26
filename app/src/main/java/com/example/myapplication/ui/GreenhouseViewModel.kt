@@ -2,8 +2,12 @@ package com.example.myapplication.ui
 
 import android.app.Application
 import android.bluetooth.BluetoothDevice
+import androidx.fragment.app.FragmentActivity
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import androidx.lifecycle.ProcessLifecycleOwner
+import androidx.lifecycle.DefaultLifecycleObserver
+import androidx.lifecycle.LifecycleOwner
 import com.example.myapplication.data.AppPreferences
 import com.example.myapplication.data.BluetoothConnectionManager
 import com.example.myapplication.data.ControlMode
@@ -11,10 +15,13 @@ import com.example.myapplication.data.GreenhouseState
 import com.example.myapplication.data.NotificationHelper
 import com.example.myapplication.data.SensorReading
 import com.example.myapplication.data.UserProfile
-import kotlinx.coroutines.delay
+import com.example.myapplication.data.UserPreferencesRepository
+import com.example.myapplication.data.AuthRepository
+import com.example.myapplication.data.KeystoreBiometricManager
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import java.util.Locale
@@ -23,6 +30,9 @@ class GreenhouseViewModel(application: Application) : AndroidViewModel(applicati
 
     private val notificationHelper = NotificationHelper(application)
     private val bluetoothManager = BluetoothConnectionManager(application)
+    private val userPreferencesRepository = UserPreferencesRepository(application)
+    private val authRepository = AuthRepository()
+    private val biometricManager = KeystoreBiometricManager(application)
 
     private val _uiState = MutableStateFlow(GreenhouseState())
     val uiState: StateFlow<GreenhouseState> = _uiState.asStateFlow()
@@ -49,10 +59,130 @@ class GreenhouseViewModel(application: Application) : AndroidViewModel(applicati
         }
         _history.value = initialHistory
 
-        // Simular tiempo de carga (Splash Screen)
+        // Carga inicial sincronizada: Esperar tutorial y biometría antes de quitar la Splash Screen (isLoading = false)
         viewModelScope.launch {
-            delay(2500) // 2.5 segundos de carga
-            _uiState.update { it.copy(isLoading = false) }
+            try {
+                val showTutorial = userPreferencesRepository.showTutorialFlow.first()
+                val currentUser = authRepository.currentUser
+
+                if (currentUser != null) {
+                    val profile = authRepository.getUserProfile()
+                    val biometricEnabled = try {
+                        userPreferencesRepository.getBiometricEnabledFlow(currentUser.uid).first()
+                    } catch (e: Exception) {
+                        false
+                    }
+
+                    _uiState.update {
+                        it.copy(
+                            showTutorial = showTutorial,
+                            isLoggedIn = true,
+                            currentUser = profile,
+                            isBiometricEnabled = biometricEnabled,
+                            isAppUnlocked = !biometricEnabled, // Bloqueado si biometría activa, desbloqueado si no
+                            isLoading = false
+                        )
+                    }
+
+                    // Escuchar cambios posteriores de autenticación Firebase
+                    launch {
+                        authRepository.authStateFlow.collect { firebaseUser ->
+                            if (firebaseUser != null) {
+                                val currentProfile = authRepository.getUserProfile()
+                                _uiState.update { state ->
+                                    state.copy(
+                                        isLoggedIn = true,
+                                        currentUser = currentProfile,
+                                        authErrorMessage = null,
+                                        authSuccessMessage = null
+                                    )
+                                }
+                            } else {
+                                _uiState.update {
+                                    it.copy(
+                                        isLoggedIn = false,
+                                        currentUser = UserProfile(),
+                                        isAppUnlocked = true,
+                                        isBiometricEnabled = false,
+                                        authErrorMessage = null,
+                                        authSuccessMessage = null
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    // Escuchar cambios de preferencias biométricas del usuario actual
+                    launch {
+                        userPreferencesRepository.getBiometricEnabledFlow(currentUser.uid).collect { enabled ->
+                            _uiState.update { it.copy(isBiometricEnabled = enabled) }
+                        }
+                    }
+
+                } else {
+                    _uiState.update {
+                        it.copy(
+                            showTutorial = showTutorial,
+                            isLoggedIn = false,
+                            isAppUnlocked = true,
+                            isLoading = false
+                        )
+                    }
+
+                    // Escuchar cambios de autenticación posterior para usuarios nuevos/login
+                    launch {
+                        authRepository.authStateFlow.collect { firebaseUser ->
+                            if (firebaseUser != null) {
+                                val currentProfile = authRepository.getUserProfile()
+                                val biometricEnabled = try {
+                                    userPreferencesRepository.getBiometricEnabledFlow(firebaseUser.uid).first()
+                                } catch (e: Exception) {
+                                    false
+                                }
+                                _uiState.update {
+                                    it.copy(
+                                        isLoggedIn = true,
+                                        currentUser = currentProfile,
+                                        isBiometricEnabled = biometricEnabled,
+                                        isAppUnlocked = !biometricEnabled,
+                                        authErrorMessage = null,
+                                        authSuccessMessage = null
+                                    )
+                                }
+                            } else {
+                                _uiState.update {
+                                    it.copy(
+                                        isLoggedIn = false,
+                                        currentUser = UserProfile(),
+                                        isAppUnlocked = true,
+                                        isBiometricEnabled = false,
+                                        authErrorMessage = null,
+                                        authSuccessMessage = null
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+
+            } catch (e: Exception) {
+                _uiState.update { it.copy(isLoading = false, isAppUnlocked = true) }
+            }
+        }
+
+        // Observar ciclo de vida de la app para bloquear al pasar a segundo plano si la biometría está activa
+        try {
+            ProcessLifecycleOwner.get().lifecycle.addObserver(object : DefaultLifecycleObserver {
+                override fun onStop(owner: LifecycleOwner) {
+                    super.onStop(owner)
+                    val state = _uiState.value
+                    if (state.isLoggedIn && state.isBiometricEnabled) {
+                        _uiState.update { it.copy(isAppUnlocked = false) }
+                    }
+                }
+            })
+        } catch (e: Exception) {
+            e.printStackTrace()
         }
 
         // Iniciar simulación por defecto
@@ -195,44 +325,122 @@ class GreenhouseViewModel(application: Application) : AndroidViewModel(applicati
 
     fun dismissTutorial() {
         _uiState.update { it.copy(showTutorial = false) }
+        viewModelScope.launch {
+            userPreferencesRepository.setTutorialCompleted()
+        }
     }
 
     fun replayTutorial() {
         _uiState.update { it.copy(showTutorial = true) }
     }
 
-    // --- Autenticación ---
-    fun login(email: String, pass: String): Boolean {
-        if (email.isBlank() || pass.isBlank()) return false
-        val userName = email.substringBefore("@").replaceFirstChar { if (it.isLowerCase()) it.titlecase(Locale.getDefault()) else it.toString() }
-        _uiState.update {
-            it.copy(
-                isLoggedIn = true,
-                currentUser = UserProfile(
-                    name = if (userName.isNotEmpty()) userName else "Usuario Invernadero",
-                    email = email,
-                    phone = "+52 55 1234 5678",
-                    authProvider = "Correo/Contraseña"
-                )
-            )
+    // --- Autenticación Firebase Real ---
+    fun login(email: String, pass: String, onSuccess: () -> Unit = {}, onError: (String) -> Unit = {}) {
+        if (email.isBlank() || pass.isBlank()) {
+            val msg = "Por favor completa todos los campos."
+            _uiState.update { it.copy(authErrorMessage = msg) }
+            onError(msg)
+            return
         }
-        return true
+        _uiState.update { it.copy(isAuthLoading = true, authErrorMessage = null) }
+        viewModelScope.launch {
+            val result = authRepository.login(email, pass)
+            _uiState.update { it.copy(isAuthLoading = false) }
+            result.onSuccess {
+                _uiState.update { state -> state.copy(currentUser = authRepository.getUserProfile(), authErrorMessage = null) }
+                onSuccess()
+            }.onFailure { error ->
+                val errMsg = error.message ?: "Error al iniciar sesión."
+                _uiState.update { state -> state.copy(authErrorMessage = errMsg) }
+                onError(errMsg)
+            }
+        }
     }
 
-    fun register(name: String, email: String, pass: String): Boolean {
-        if (name.isBlank() || email.isBlank() || pass.isBlank()) return false
+    fun register(name: String, email: String, pass: String, confirmPass: String, onSuccess: () -> Unit = {}, onError: (String) -> Unit = {}) {
+        if (name.isBlank() || email.isBlank() || pass.isBlank() || confirmPass.isBlank()) {
+            val msg = "Por favor completa todos los campos."
+            _uiState.update { it.copy(authErrorMessage = msg) }
+            onError(msg)
+            return
+        }
+        if (pass != confirmPass) {
+            val msg = "Las contraseñas no coinciden."
+            _uiState.update { it.copy(authErrorMessage = msg) }
+            onError(msg)
+            return
+        }
+        if (pass.length < 6) {
+            val msg = "La contraseña debe tener al menos 6 caracteres."
+            _uiState.update { it.copy(authErrorMessage = msg) }
+            onError(msg)
+            return
+        }
+        _uiState.update { it.copy(isAuthLoading = true, authErrorMessage = null) }
+        viewModelScope.launch {
+            val result = authRepository.register(name, email, pass)
+            _uiState.update { it.copy(isAuthLoading = false) }
+            result.onSuccess {
+                _uiState.update { state -> state.copy(currentUser = authRepository.getUserProfile(), authErrorMessage = null) }
+                onSuccess()
+            }.onFailure { error ->
+                val errMsg = error.message ?: "Error al registrar la cuenta."
+                _uiState.update { state -> state.copy(authErrorMessage = errMsg) }
+                onError(errMsg)
+            }
+        }
+    }
+
+    fun sendPasswordReset(email: String, onResult: (String) -> Unit = {}) {
+        if (email.isBlank()) {
+            val msg = "Por favor ingresa tu correo electrónico."
+            _uiState.update { it.copy(authErrorMessage = msg) }
+            onResult(msg)
+            return
+        }
+        _uiState.update { it.copy(isAuthLoading = true, authErrorMessage = null, authSuccessMessage = null) }
+        viewModelScope.launch {
+            val result = authRepository.sendPasswordReset(email)
+            _uiState.update { it.copy(isAuthLoading = false) }
+            val message = result.getOrDefault("Si existe una cuenta asociada a este correo, se enviarán las instrucciones para restablecer la contraseña.")
+            _uiState.update { state -> state.copy(authSuccessMessage = message) }
+            onResult(message)
+        }
+    }
+
+    fun logout() {
+        val user = authRepository.currentUser
+        viewModelScope.launch {
+            if (user != null) {
+                userPreferencesRepository.setBiometricEnabled(user.uid, false)
+            }
+        }
+        authRepository.signOut()
+        biometricManager.deleteBiometricKey()
         _uiState.update {
             it.copy(
-                isLoggedIn = true,
-                currentUser = UserProfile(
-                    name = name,
-                    email = email,
-                    phone = "+52 55 1234 5678",
-                    authProvider = "Correo/Contraseña"
-                )
+                isLoggedIn = false,
+                currentUser = UserProfile(),
+                isAppUnlocked = true,
+                isBiometricEnabled = false,
+                authErrorMessage = null,
+                authSuccessMessage = null
             )
         }
-        return true
+        showSnackbar("Sesión cerrada correctamente.")
+    }
+
+    fun clearAuthMessages() {
+        _uiState.update { it.copy(authErrorMessage = null, authSuccessMessage = null) }
+    }
+
+    fun lockApp() {
+        if (_uiState.value.isBiometricEnabled) {
+            _uiState.update { it.copy(isAppUnlocked = false) }
+            showSnackbar("Aplicación bloqueada. Se requiere autenticación biométrica.")
+        } else {
+            showSnackbar("La biometría no está habilitada en tu perfil.")
+        }
     }
 
     fun loginWithSSO(provider: String) {
@@ -252,28 +460,71 @@ class GreenhouseViewModel(application: Application) : AndroidViewModel(applicati
         showSnackbar("Sesión iniciada con $provider")
     }
 
-    fun loginWithBiometrics() {
-        _uiState.update {
-            it.copy(
-                isLoggedIn = true,
-                currentUser = UserProfile(
-                    name = "Usuario Biométrico",
-                    email = "biometria@invernaderosmart.com",
-                    phone = "+52 55 5555 5555",
-                    authProvider = "Biometría / Huella Digital"
-                )
-            )
+    fun authenticateWithBiometrics(activity: FragmentActivity, onSuccess: () -> Unit = {}) {
+        if (!biometricManager.isBiometricAvailable()) {
+            showSnackbar("El dispositivo no soporta biometría o no hay huellas registradas.")
+            return
         }
-        showSnackbar("Sesión iniciada con Biometría / Huella Digital")
+        biometricManager.authenticate(
+            activity = activity,
+            title = "Desbloquear Invernadero Smart",
+            subtitle = "Confirma tu identidad para acceder a tu sesión",
+            negativeButtonText = "Usar Contraseña",
+            onSuccess = {
+                _uiState.update { it.copy(isAppUnlocked = true) }
+                showSnackbar("¡Aplicación desbloqueada con éxito!")
+                onSuccess()
+            },
+            onError = { error ->
+                showSnackbar("Error biométrico: $error")
+            },
+            onCancel = {
+                showSnackbar("Autenticación biométrica cancelada")
+            }
+        )
     }
 
-    fun logout() {
-        _uiState.update {
-            it.copy(
-                isLoggedIn = false
-            )
+    fun toggleBiometricSetting(activity: FragmentActivity, enable: Boolean) {
+        val user = authRepository.currentUser
+        if (user == null) {
+            showSnackbar("Debes iniciar sesión para configurar la biometría.")
+            return
         }
-        showSnackbar("Sesión cerrada correctamente")
+        if (enable && !biometricManager.isBiometricAvailable()) {
+            showSnackbar("No hay hardware biométrico disponible o configurado en este dispositivo.")
+            return
+        }
+
+        if (enable) {
+            biometricManager.authenticate(
+                activity = activity,
+                title = "Activar Autenticación Biométrica",
+                subtitle = "Confirma tu huella para proteger tu cuenta",
+                negativeButtonText = "Cancelar",
+                onSuccess = {
+                    viewModelScope.launch {
+                        userPreferencesRepository.setBiometricEnabled(user.uid, true)
+                        _uiState.update { it.copy(isBiometricEnabled = true, isAppUnlocked = true) }
+                        showSnackbar("Autenticación biométrica activada correctamente.")
+                    }
+                },
+                onError = { err ->
+                    showSnackbar("No se pudo activar la biometría: $err")
+                },
+                onCancel = {}
+            )
+        } else {
+            viewModelScope.launch {
+                userPreferencesRepository.setBiometricEnabled(user.uid, false)
+                _uiState.update { it.copy(isBiometricEnabled = false, isAppUnlocked = true) }
+                biometricManager.deleteBiometricKey()
+                showSnackbar("Autenticación biométrica desactivada.")
+            }
+        }
+    }
+
+    fun loginWithBiometrics() {
+        showSnackbar("Por favor inicia sesión con correo y contraseña primero. La biometría se usa para desbloquear tu sesión existente.")
     }
 
     // --- Feedback & Mensajes Toast / Snackbar ---

@@ -2,6 +2,11 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
+    <!-- Permiso para Internet (Firebase) -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Permiso para Autenticación Biométrica -->
+    <uses-permission android:name="android.permission.USE_BIOMETRIC" />
+
     <!-- Permisos de Bluetooth -->
     <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
     <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30" />
@@ -21,12 +26,12 @@
         android:label="Invernadero Smart"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
-        android:theme="@style/Theme.MyApplication">
+        android:theme="@style/Theme.App.Starting">
         <activity
             android:name=".MainActivity"
             android:exported="true"
             android:label="Invernadero Smart"
-            android:theme="@style/Theme.MyApplication"
+            android:theme="@style/Theme.App.Starting"
             android:windowSoftInputMode="adjustResize">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />

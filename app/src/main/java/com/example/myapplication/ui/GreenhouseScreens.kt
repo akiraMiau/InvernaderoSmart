@@ -25,7 +25,6 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.scale
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
@@ -39,6 +38,9 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.platform.LocalContext
+import androidx.fragment.app.FragmentActivity
+import androidx.activity.compose.BackHandler
 import com.example.myapplication.data.AppColorScheme
 import com.example.myapplication.data.AppPreferences
 import com.example.myapplication.data.AppTheme
@@ -86,10 +88,10 @@ fun MainGreenhouseScreen(
         }
     }
 
-    // Flujo principal: Splash (Carga) -> Onboarding (Tutorial) -> Autenticación (Login/SSO) -> Panel Principal
+    // Flujo principal: Onboarding (Tutorial) -> Autenticación (Login/SSO) -> Panel Principal
     when {
         uiState.isLoading -> {
-            SplashScreen()
+            // La Splash Screen nativa del sistema permanece en pantalla mediante setKeepOnScreenCondition mientras isLoading sea true
         }
         uiState.showTutorial -> {
             TutorialScreen(onFinish = {
@@ -99,6 +101,9 @@ fun MainGreenhouseScreen(
         }
         !uiState.isLoggedIn -> {
             AuthScreen(viewModel = viewModel)
+        }
+        !uiState.isAppUnlocked -> {
+            BiometricLockScreen(viewModel = viewModel)
         }
         else -> {
             Scaffold(
@@ -245,6 +250,12 @@ fun MainGreenhouseScreen(
                             },
                             onReplayTutorial = {
                                 viewModel.replayTutorial()
+                            },
+                            onToggleBiometric = { activity, enable ->
+                                viewModel.toggleBiometricSetting(activity, enable)
+                            },
+                            onLockApp = {
+                                viewModel.lockApp()
                             },
                             onLogout = {
                                 viewModel.logout()
@@ -449,91 +460,6 @@ fun ErrorStateView(
 }
 
 // ==========================================
-// PANTALLA DE CARGA (SPLASH SCREEN)
-// ==========================================
-
-@Composable
-fun SplashScreen() {
-    val infiniteTransition = rememberInfiniteTransition(label = "splashTransition")
-    val scale by infiniteTransition.animateFloat(
-        initialValue = 0.9f,
-        targetValue = 1.15f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(1200, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "logoScale"
-    )
-
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(MaterialTheme.colorScheme.primaryContainer),
-        contentAlignment = Alignment.Center
-    ) {
-        Column(
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center,
-            modifier = Modifier.padding(32.dp)
-        ) {
-            Box(
-                modifier = Modifier
-                    .size(140.dp)
-                    .clip(CircleShape)
-                    .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.85f)),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Eco,
-                    contentDescription = "Logo Invernadero Smart",
-                    modifier = Modifier
-                        .size(80.dp)
-                        .scale(scale),
-                    tint = MaterialTheme.colorScheme.primary
-                )
-            }
-
-            Spacer(modifier = Modifier.height(32.dp))
-
-            Text(
-                text = "Invernadero Smart",
-                fontSize = 30.sp,
-                fontWeight = FontWeight.ExtraBold,
-                color = MaterialTheme.colorScheme.onPrimaryContainer,
-                textAlign = TextAlign.Center
-            )
-
-            Spacer(modifier = Modifier.height(6.dp))
-
-            Text(
-                text = "Control & Monitoreo Agrícola Automatizado",
-                fontSize = 13.sp,
-                fontWeight = FontWeight.Medium,
-                color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f),
-                textAlign = TextAlign.Center
-            )
-
-            Spacer(modifier = Modifier.height(48.dp))
-
-            CircularProgressIndicator(
-                modifier = Modifier.size(42.dp),
-                color = MaterialTheme.colorScheme.primary,
-                strokeWidth = 3.5.dp
-            )
-
-            Spacer(modifier = Modifier.height(16.dp))
-
-            Text(
-                text = "Inicializando sensores y verificando sesión...",
-                fontSize = 12.sp,
-                fontWeight = FontWeight.Normal,
-                color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f)
-            )
-        }
-    }
-}
-
-// ==========================================
 // PANTALLAS DE AUTENTICACIÓN (LOGIN / REGISTRO / RECUPERACIÓN / SSO / BIOMETRÍA)
 // ==========================================
 
@@ -546,6 +472,12 @@ enum class AuthMode {
 @Composable
 fun AuthScreen(viewModel: GreenhouseViewModel) {
     var authMode by remember { mutableStateOf(AuthMode.LOGIN) }
+    val uiState by viewModel.uiState.collectAsState()
+
+    // Limpiar mensajes al cambiar entre Login, Registro o Recuperación
+    LaunchedEffect(authMode) {
+        viewModel.clearAuthMessages()
+    }
 
     Surface(
         modifier = Modifier.fillMaxSize(),
@@ -560,25 +492,26 @@ fun AuthScreen(viewModel: GreenhouseViewModel) {
         ) {
             when (authMode) {
                 AuthMode.LOGIN -> LoginContent(
+                    isAuthLoading = uiState.isAuthLoading,
+                    authErrorMessage = uiState.authErrorMessage,
                     onLogin = { email, pass ->
-                        if (viewModel.login(email, pass)) {
+                        viewModel.login(email, pass, onSuccess = {
                             viewModel.showSnackbar("¡Bienvenido de nuevo!")
-                        }
+                        })
                     },
                     onSSO = { provider ->
                         viewModel.loginWithSSO(provider)
-                    },
-                    onBiometricLogin = {
-                        viewModel.loginWithBiometrics()
                     },
                     onForgotPassword = { authMode = AuthMode.RECOVERY },
                     onNavigateToRegister = { authMode = AuthMode.REGISTER }
                 )
                 AuthMode.REGISTER -> RegisterContent(
-                    onRegister = { name, email, pass ->
-                        if (viewModel.register(name, email, pass)) {
+                    isAuthLoading = uiState.isAuthLoading,
+                    authErrorMessage = uiState.authErrorMessage,
+                    onRegister = { name, email, pass, confirmPass ->
+                        viewModel.register(name, email, pass, confirmPass, onSuccess = {
                             viewModel.showSnackbar("¡Cuenta creada con éxito!")
-                        }
+                        })
                     },
                     onSSO = { provider ->
                         viewModel.loginWithSSO(provider)
@@ -586,6 +519,12 @@ fun AuthScreen(viewModel: GreenhouseViewModel) {
                     onNavigateToLogin = { authMode = AuthMode.LOGIN }
                 )
                 AuthMode.RECOVERY -> RecoveryContent(
+                    isAuthLoading = uiState.isAuthLoading,
+                    authErrorMessage = uiState.authErrorMessage,
+                    authSuccessMessage = uiState.authSuccessMessage,
+                    onSendReset = { email ->
+                        viewModel.sendPasswordReset(email)
+                    },
                     onBackToLogin = { authMode = AuthMode.LOGIN }
                 )
             }
@@ -595,16 +534,17 @@ fun AuthScreen(viewModel: GreenhouseViewModel) {
 
 @Composable
 fun LoginContent(
+    isAuthLoading: Boolean,
+    authErrorMessage: String?,
     onLogin: (String, String) -> Unit,
     onSSO: (String) -> Unit,
-    onBiometricLogin: () -> Unit,
     onForgotPassword: () -> Unit,
     onNavigateToRegister: () -> Unit
 ) {
     var email by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
     var isPasswordVisible by remember { mutableStateOf(false) }
-    var errorMessage by remember { mutableStateOf<String?>(null) }
+    var localErrorMessage by remember { mutableStateOf<String?>(null) }
 
     val scrollState = rememberScrollState()
 
@@ -651,11 +591,12 @@ fun LoginContent(
             value = email,
             onValueChange = {
                 email = it
-                errorMessage = null
+                localErrorMessage = null
             },
             label = { Text("Correo Electrónico") },
             leadingIcon = { Icon(Icons.Default.Email, contentDescription = "Ícono correo") },
             singleLine = true,
+            enabled = !isAuthLoading,
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
             modifier = Modifier.fillMaxWidth()
         )
@@ -666,12 +607,12 @@ fun LoginContent(
             value = password,
             onValueChange = {
                 password = it
-                errorMessage = null
+                localErrorMessage = null
             },
             label = { Text("Contraseña") },
             leadingIcon = { Icon(Icons.Default.Lock, contentDescription = "Ícono candado") },
             trailingIcon = {
-                IconButton(onClick = { isPasswordVisible = !isPasswordVisible }) {
+                IconButton(onClick = { isPasswordVisible = !isPasswordVisible }, enabled = !isAuthLoading) {
                     Icon(
                         imageVector = if (isPasswordVisible) Icons.Default.VisibilityOff else Icons.Default.Visibility,
                         contentDescription = "Alternar visibilidad de contraseña"
@@ -679,6 +620,7 @@ fun LoginContent(
                 }
             },
             singleLine = true,
+            enabled = !isAuthLoading,
             visualTransformation = if (isPasswordVisible) VisualTransformation.None else PasswordVisualTransformation(),
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
             modifier = Modifier.fillMaxWidth()
@@ -688,45 +630,41 @@ fun LoginContent(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.End
         ) {
-            TextButton(onClick = onForgotPassword) {
+            TextButton(onClick = onForgotPassword, enabled = !isAuthLoading) {
                 Text("¿Olvidaste tu contraseña?", fontSize = 13.sp)
             }
         }
 
-        errorMessage?.let {
-            Text(it, color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
+        val displayError = localErrorMessage ?: authErrorMessage
+        displayError?.let {
+            Text(it, color = MaterialTheme.colorScheme.error, fontSize = 12.sp, textAlign = TextAlign.Center)
             Spacer(modifier = Modifier.height(8.dp))
         }
 
         Button(
             onClick = {
                 if (email.isBlank() || password.isBlank()) {
-                    errorMessage = "Por favor completa todos los campos"
+                    localErrorMessage = "Por favor completa todos los campos"
                 } else {
+                    localErrorMessage = null
                     onLogin(email, password)
                 }
             },
+            enabled = !isAuthLoading,
             modifier = Modifier
                 .fillMaxWidth()
                 .height(50.dp),
             shape = RoundedCornerShape(12.dp)
         ) {
-            Text("Iniciar Sesión", fontSize = 16.sp, fontWeight = FontWeight.Bold)
-        }
-
-        Spacer(modifier = Modifier.height(10.dp))
-
-        // Botón de Autenticación Biométrica (Huella / FaceID)
-        OutlinedButton(
-            onClick = onBiometricLogin,
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(48.dp),
-            shape = RoundedCornerShape(12.dp)
-        ) {
-            Icon(Icons.Default.Fingerprint, contentDescription = "Autenticación biométrica")
-            Spacer(modifier = Modifier.width(8.dp))
-            Text("Ingresar con Huella / Biometría", fontSize = 14.sp)
+            if (isAuthLoading) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(22.dp),
+                    color = MaterialTheme.colorScheme.onPrimary,
+                    strokeWidth = 2.5.dp
+                )
+            } else {
+                Text("Iniciar Sesión", fontSize = 16.sp, fontWeight = FontWeight.Bold)
+            }
         }
 
         Spacer(modifier = Modifier.height(20.dp))
@@ -752,7 +690,7 @@ fun LoginContent(
             icon = Icons.Default.AccountCircle,
             containerColor = Color(0xFFF2F2F2),
             contentColor = Color(0xFF333333),
-            onClick = { onSSO("Google SSO") }
+            onClick = { if (!isAuthLoading) onSSO("Google SSO") }
         )
 
         Spacer(modifier = Modifier.height(10.dp))
@@ -762,7 +700,7 @@ fun LoginContent(
             icon = Icons.Default.PhoneIphone,
             containerColor = Color(0xFF000000),
             contentColor = Color.White,
-            onClick = { onSSO("Apple SSO") }
+            onClick = { if (!isAuthLoading) onSSO("Apple SSO") }
         )
 
         Spacer(modifier = Modifier.height(24.dp))
@@ -771,7 +709,7 @@ fun LoginContent(
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text("¿No tienes una cuenta?", fontSize = 14.sp, color = Color.Gray)
-            TextButton(onClick = onNavigateToRegister) {
+            TextButton(onClick = onNavigateToRegister, enabled = !isAuthLoading) {
                 Text("Regístrate", fontWeight = FontWeight.Bold)
             }
         }
@@ -780,7 +718,9 @@ fun LoginContent(
 
 @Composable
 fun RegisterContent(
-    onRegister: (String, String, String) -> Unit,
+    isAuthLoading: Boolean,
+    authErrorMessage: String?,
+    onRegister: (String, String, String, String) -> Unit,
     onSSO: (String) -> Unit,
     onNavigateToLogin: () -> Unit
 ) {
@@ -789,7 +729,7 @@ fun RegisterContent(
     var password by remember { mutableStateOf("") }
     var confirmPassword by remember { mutableStateOf("") }
     var isPasswordVisible by remember { mutableStateOf(false) }
-    var errorMessage by remember { mutableStateOf<String?>(null) }
+    var localErrorMessage by remember { mutableStateOf<String?>(null) }
 
     val scrollState = rememberScrollState()
 
@@ -834,10 +774,11 @@ fun RegisterContent(
 
         OutlinedTextField(
             value = name,
-            onValueChange = { name = it; errorMessage = null },
+            onValueChange = { name = it; localErrorMessage = null },
             label = { Text("Nombre Completo") },
             leadingIcon = { Icon(Icons.Default.Person, contentDescription = "Nombre") },
             singleLine = true,
+            enabled = !isAuthLoading,
             modifier = Modifier.fillMaxWidth()
         )
 
@@ -845,10 +786,11 @@ fun RegisterContent(
 
         OutlinedTextField(
             value = email,
-            onValueChange = { email = it; errorMessage = null },
+            onValueChange = { email = it; localErrorMessage = null },
             label = { Text("Correo Electrónico") },
             leadingIcon = { Icon(Icons.Default.Email, contentDescription = "Correo") },
             singleLine = true,
+            enabled = !isAuthLoading,
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
             modifier = Modifier.fillMaxWidth()
         )
@@ -857,11 +799,11 @@ fun RegisterContent(
 
         OutlinedTextField(
             value = password,
-            onValueChange = { password = it; errorMessage = null },
+            onValueChange = { password = it; localErrorMessage = null },
             label = { Text("Contraseña") },
             leadingIcon = { Icon(Icons.Default.Lock, contentDescription = "Contraseña") },
             trailingIcon = {
-                IconButton(onClick = { isPasswordVisible = !isPasswordVisible }) {
+                IconButton(onClick = { isPasswordVisible = !isPasswordVisible }, enabled = !isAuthLoading) {
                     Icon(
                         imageVector = if (isPasswordVisible) Icons.Default.VisibilityOff else Icons.Default.Visibility,
                         contentDescription = "Ver contraseña"
@@ -869,6 +811,7 @@ fun RegisterContent(
                 }
             },
             singleLine = true,
+            enabled = !isAuthLoading,
             visualTransformation = if (isPasswordVisible) VisualTransformation.None else PasswordVisualTransformation(),
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
             modifier = Modifier.fillMaxWidth()
@@ -878,10 +821,11 @@ fun RegisterContent(
 
         OutlinedTextField(
             value = confirmPassword,
-            onValueChange = { confirmPassword = it; errorMessage = null },
+            onValueChange = { confirmPassword = it; localErrorMessage = null },
             label = { Text("Confirmar Contraseña") },
             leadingIcon = { Icon(Icons.Default.LockReset, contentDescription = "Confirmar contraseña") },
             singleLine = true,
+            enabled = !isAuthLoading,
             visualTransformation = PasswordVisualTransformation(),
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
             modifier = Modifier.fillMaxWidth()
@@ -889,27 +833,40 @@ fun RegisterContent(
 
         Spacer(modifier = Modifier.height(12.dp))
 
-        errorMessage?.let {
-            Text(it, color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
+        val displayError = localErrorMessage ?: authErrorMessage
+        displayError?.let {
+            Text(it, color = MaterialTheme.colorScheme.error, fontSize = 12.sp, textAlign = TextAlign.Center)
             Spacer(modifier = Modifier.height(8.dp))
         }
 
         Button(
             onClick = {
                 if (name.isBlank() || email.isBlank() || password.isBlank()) {
-                    errorMessage = "Por favor completa todos los campos"
+                    localErrorMessage = "Por favor completa todos los campos"
                 } else if (password != confirmPassword) {
-                    errorMessage = "Las contraseñas no coinciden"
+                    localErrorMessage = "Las contraseñas no coinciden"
+                } else if (password.length < 6) {
+                    localErrorMessage = "La contraseña debe tener al menos 6 caracteres"
                 } else {
-                    onRegister(name, email, password)
+                    localErrorMessage = null
+                    onRegister(name, email, password, confirmPassword)
                 }
             },
+            enabled = !isAuthLoading,
             modifier = Modifier
                 .fillMaxWidth()
                 .height(50.dp),
             shape = RoundedCornerShape(12.dp)
         ) {
-            Text("Registrarse", fontSize = 16.sp, fontWeight = FontWeight.Bold)
+            if (isAuthLoading) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(22.dp),
+                    color = MaterialTheme.colorScheme.onPrimary,
+                    strokeWidth = 2.5.dp
+                )
+            } else {
+                Text("Registrarse", fontSize = 16.sp, fontWeight = FontWeight.Bold)
+            }
         }
 
         Spacer(modifier = Modifier.height(16.dp))
@@ -919,7 +876,7 @@ fun RegisterContent(
             icon = Icons.Default.AccountCircle,
             containerColor = Color(0xFFF2F2F2),
             contentColor = Color(0xFF333333),
-            onClick = { onSSO("Google SSO") }
+            onClick = { if (!isAuthLoading) onSSO("Google SSO") }
         )
 
         Spacer(modifier = Modifier.height(16.dp))
@@ -928,7 +885,7 @@ fun RegisterContent(
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text("¿Ya tienes una cuenta?", fontSize = 14.sp, color = Color.Gray)
-            TextButton(onClick = onNavigateToLogin) {
+            TextButton(onClick = onNavigateToLogin, enabled = !isAuthLoading) {
                 Text("Inicia sesión", fontWeight = FontWeight.Bold)
             }
         }
@@ -937,10 +894,14 @@ fun RegisterContent(
 
 @Composable
 fun RecoveryContent(
+    isAuthLoading: Boolean,
+    authErrorMessage: String?,
+    authSuccessMessage: String?,
+    onSendReset: (String) -> Unit,
     onBackToLogin: () -> Unit
 ) {
     var email by remember { mutableStateOf("") }
-    var isSubmitted by remember { mutableStateOf(false) }
+    var localErrorMessage by remember { mutableStateOf<String?>(null) }
 
     Column(
         modifier = Modifier
@@ -975,7 +936,7 @@ fun RecoveryContent(
         Spacer(modifier = Modifier.height(8.dp))
 
         Text(
-            "Flujo sin fricción: Ingresa tu correo registrado y te enviaremos las instrucciones de restablecimiento de inmediato.",
+            "Ingresa tu correo registrado y te enviaremos las instrucciones de restablecimiento de inmediato.",
             fontSize = 13.sp,
             color = Color.Gray,
             textAlign = TextAlign.Center
@@ -983,7 +944,7 @@ fun RecoveryContent(
 
         Spacer(modifier = Modifier.height(24.dp))
 
-        if (isSubmitted) {
+        authSuccessMessage?.let { successMsg ->
             Card(
                 colors = CardDefaults.cardColors(containerColor = Color(0xFFE8F5E9)),
                 border = CardDefaults.outlinedCardBorder().copy(brush = SolidColor(Color(0xFF4CAF50))),
@@ -1001,13 +962,13 @@ fun RecoveryContent(
                     )
                     Spacer(modifier = Modifier.height(8.dp))
                     Text(
-                        "¡Correo de Recuperación Enviado!",
+                        "¡Solicitud Procesada!",
                         fontWeight = FontWeight.Bold,
                         color = Color(0xFF2E7D32)
                     )
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(
-                        "Hemos enviado las instrucciones a: $email.\nRevisa tu bandeja de entrada o spam para restablecer tu contraseña.",
+                        successMsg,
                         fontSize = 12.sp,
                         color = Color.DarkGray,
                         textAlign = TextAlign.Center
@@ -1025,37 +986,57 @@ fun RecoveryContent(
             ) {
                 Text("Volver a Iniciar Sesión")
             }
-        } else {
+        } ?: run {
             OutlinedTextField(
                 value = email,
-                onValueChange = { email = it },
+                onValueChange = { email = it; localErrorMessage = null },
                 label = { Text("Correo Electrónico Registrado") },
                 leadingIcon = { Icon(Icons.Default.Email, contentDescription = "Correo registrado") },
                 singleLine = true,
+                enabled = !isAuthLoading,
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
                 modifier = Modifier.fillMaxWidth()
             )
 
-            Spacer(modifier = Modifier.height(20.dp))
+            Spacer(modifier = Modifier.height(12.dp))
+
+            val displayError = localErrorMessage ?: authErrorMessage
+            displayError?.let {
+                Text(it, color = MaterialTheme.colorScheme.error, fontSize = 12.sp, textAlign = TextAlign.Center)
+                Spacer(modifier = Modifier.height(8.dp))
+            }
 
             Button(
                 onClick = {
-                    if (email.isNotBlank()) {
-                        isSubmitted = true
+                    if (email.isBlank()) {
+                        localErrorMessage = "Por favor ingresa tu correo electrónico"
+                    } else {
+                        localErrorMessage = null
+                        onSendReset(email)
                     }
                 },
+                enabled = !isAuthLoading,
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(50.dp),
                 shape = RoundedCornerShape(12.dp)
             ) {
-                Text("Enviar Enlace de Recuperación", fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                if (isAuthLoading) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(22.dp),
+                        color = MaterialTheme.colorScheme.onPrimary,
+                        strokeWidth = 2.5.dp
+                    )
+                } else {
+                    Text("Enviar Enlace de Recuperación", fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                }
             }
 
             Spacer(modifier = Modifier.height(16.dp))
 
             OutlinedButton(
                 onClick = onBackToLogin,
+                enabled = !isAuthLoading,
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Icon(Icons.Default.ArrowBack, contentDescription = "Volver atrás")
@@ -2021,6 +2002,106 @@ fun ConnectionTab(
 }
 
 // ==========================================
+// PANTALLA DE BLOQUEO BIOMÉTRICO
+// ==========================================
+
+@Composable
+fun BiometricLockScreen(viewModel: GreenhouseViewModel) {
+    val context = LocalContext.current
+    val activity = context as? FragmentActivity
+    val uiState by viewModel.uiState.collectAsState()
+
+    BackHandler {
+        // Impedir que el botón físico Atrás vulnere la pantalla de bloqueo
+    }
+
+    LaunchedEffect(Unit) {
+        if (activity != null && uiState.isBiometricEnabled) {
+            viewModel.authenticateWithBiometrics(activity)
+        }
+    }
+
+    Surface(
+        modifier = Modifier.fillMaxSize(),
+        color = MaterialTheme.colorScheme.background
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(32.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(96.dp)
+                    .clip(CircleShape)
+                    .background(MaterialTheme.colorScheme.primaryContainer),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Lock,
+                    contentDescription = "Aplicación Bloqueada",
+                    modifier = Modifier.size(52.dp),
+                    tint = MaterialTheme.colorScheme.primary
+                )
+            }
+
+            Spacer(modifier = Modifier.height(24.dp))
+
+            Text(
+                text = "Aplicación Bloqueada",
+                fontSize = 26.sp,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onBackground,
+                textAlign = TextAlign.Center
+            )
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            Text(
+                text = "Hola, ${uiState.currentUser.name}. Tu sesión está protegida con autenticación biométrica.",
+                fontSize = 14.sp,
+                color = Color.Gray,
+                textAlign = TextAlign.Center
+            )
+
+            Spacer(modifier = Modifier.height(40.dp))
+
+            Button(
+                onClick = {
+                    if (activity != null) {
+                        viewModel.authenticateWithBiometrics(activity)
+                    }
+                },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(52.dp),
+                shape = RoundedCornerShape(12.dp)
+            ) {
+                Icon(Icons.Default.Fingerprint, contentDescription = "Desbloquear")
+                Spacer(modifier = Modifier.width(8.dp))
+                Text("Desbloquear con Huella", fontSize = 16.sp, fontWeight = FontWeight.Bold)
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            OutlinedButton(
+                onClick = {
+                    viewModel.logout()
+                },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(48.dp),
+                shape = RoundedCornerShape(12.dp)
+            ) {
+                Text("Cerrar Sesión / Usar Contraseña", fontSize = 14.sp)
+            }
+        }
+    }
+}
+
+// ==========================================
 // PESTAÑA PERFIL Y AJUSTES
 // ==========================================
 
@@ -2030,6 +2111,8 @@ fun ProfileTab(
     onUpdateProfile: (String, String, String) -> Unit,
     onUpdatePreferences: (AppPreferences) -> Unit,
     onReplayTutorial: () -> Unit,
+    onToggleBiometric: (FragmentActivity, Boolean) -> Unit,
+    onLockApp: () -> Unit,
     onLogout: () -> Unit
 ) {
     val user = uiState.currentUser
@@ -2170,6 +2253,67 @@ fun ProfileTab(
                         Icon(Icons.Default.Save, contentDescription = "Guardar cambios")
                         Spacer(modifier = Modifier.width(6.dp))
                         Text("Guardar Cambios")
+                    }
+                }
+            }
+        }
+
+        // Sección: Seguridad y Biometría
+        item {
+            Card(
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            Icons.Default.Fingerprint,
+                            contentDescription = "Seguridad y Biometría",
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            "Seguridad y Acceso Biométrico",
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 16.sp
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    val context = LocalContext.current
+                    val activity = context as? FragmentActivity
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("Desbloqueo por Huella / Biometría", fontWeight = FontWeight.Medium, fontSize = 14.sp)
+                            Text("Solicitar biometría al abrir la aplicación", fontSize = 12.sp, color = Color.Gray)
+                        }
+                        Switch(
+                            checked = uiState.isBiometricEnabled,
+                            onCheckedChange = { checked ->
+                                if (activity != null) {
+                                    onToggleBiometric(activity, checked)
+                                }
+                            }
+                        )
+                    }
+
+                    if (uiState.isBiometricEnabled) {
+                        Spacer(modifier = Modifier.height(16.dp))
+                        OutlinedButton(
+                            onClick = onLockApp,
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            Icon(Icons.Default.Lock, contentDescription = "Bloquear aplicación")
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("Bloquear aplicación")
+                        }
                     }
                 }
             }

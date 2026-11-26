@@ -3,21 +3,21 @@ package com.example.myapplication
 import android.Manifest
 import android.os.Build
 import android.os.Bundle
-import androidx.activity.ComponentActivity
+import androidx.fragment.app.FragmentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.activity.viewModels
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.lifecycle.viewmodel.compose.viewModel
-import com.example.myapplication.data.AppTheme
-import com.example.myapplication.ui.GreenhouseViewModel
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
+import com.example.myapplication.ui.GreenhouseViewModel
 import com.example.myapplication.ui.MainGreenhouseScreen
 import com.example.myapplication.ui.theme.MyApplicationTheme
 
-class MainActivity : ComponentActivity() {
+class MainActivity : FragmentActivity() {
+
+    private val viewModel: GreenhouseViewModel by viewModels()
 
     private val requestPermissionsLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
@@ -28,13 +28,18 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         val splashScreen = installSplashScreen()
         super.onCreate(savedInstanceState)
+
+        // Mantener la Splash Screen nativa activa hasta que DataStore termine la primera lectura
+        splashScreen.setKeepOnScreenCondition {
+            viewModel.uiState.value.isLoading
+        }
+
         enableEdgeToEdge()
 
         // Solicitar permisos en tiempo de ejecución
         requestRequiredPermissions()
 
         setContent {
-            val viewModel: GreenhouseViewModel = viewModel()
             val uiState by viewModel.uiState.collectAsState()
 
             MyApplicationTheme(
